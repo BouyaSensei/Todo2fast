@@ -192,3 +192,127 @@ pub fn update_todo(db: &Db, id: i64, patch: &UpdateTodo) -> Result<Option<Todo>>
 pub fn delete_todo(db: &Db, id: i64) -> Result<bool> {
     db.with(|conn| Ok(conn.execute("DELETE FROM todos WHERE id = ?1", [id])? > 0))
 }
+
+// ---------- Comments ----------
+
+fn reaction_row(conn: &mut rusqlite::Connection, id: i64) -> Result<crate::models::Reaction> {
+    let (comment_id, author, emoji, created_at): (i64, String, String, String) = conn.query_row(
+        "SELECT comment_id, author, emoji, created_at FROM reactions WHERE id = ?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
+    Ok(crate::models::Reaction {
+        id,
+        comment_id,
+        author,
+        emoji,
+        created_at: parse_ts(&created_at),
+    })
+}
+
+fn reactions_for(
+    conn: &mut rusqlite::Connection,
+    comment_id: i64,
+) -> Result<Vec<crate::models::Reaction>> {
+    let ids: Vec<i64> = {
+        let mut stmt =
+            conn.prepare("SELECT id FROM reactions WHERE comment_id = ?1 ORDER BY id")?;
+        let collected: std::result::Result<Vec<i64>, _> =
+            stmt.query_map([comment_id], |r| r.get(0))?.collect();
+        collected?
+    };
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        out.push(reaction_row(conn, id)?);
+    }
+    Ok(out)
+}
+
+fn comment_row(conn: &mut rusqlite::Connection, id: i64) -> Result<crate::models::Comment> {
+    let (todo_id, author, body, created_at): (i64, String, String, String) = conn.query_row(
+        "SELECT todo_id, author, body, created_at FROM comments WHERE id = ?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
+    let reactions = reactions_for(conn, id)?;
+    Ok(crate::models::Comment {
+        id,
+        todo_id,
+        author,
+        body,
+        created_at: parse_ts(&created_at),
+        reactions,
+    })
+}
+
+pub fn create_comment(
+    db: &Db,
+    input: &crate::models::CreateComment,
+) -> Result<crate::models::Comment> {
+    db.with(|conn| {
+        conn.execute(
+            "INSERT INTO comments (todo_id, author, body) VALUES (?1, ?2, ?3)",
+            rusqlite::params![input.todo_id, input.author, input.body],
+        )?;
+        comment_row(conn, conn.last_insert_rowid())
+    })
+}
+
+pub fn list_comments(db: &Db, todo_id: i64) -> Result<Vec<crate::models::Comment>> {
+    db.with(|conn| {
+        let ids: Vec<i64> = {
+            let mut stmt =
+                conn.prepare("SELECT id FROM comments WHERE todo_id = ?1 ORDER BY id")?;
+            let collected: std::result::Result<Vec<i64>, _> =
+                stmt.query_map([todo_id], |r| r.get(0))?.collect();
+            collected?
+        };
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            out.push(comment_row(conn, id)?);
+        }
+        Ok(out)
+    })
+}
+
+pub fn get_comment(db: &Db, id: i64) -> Result<Option<crate::models::Comment>> {
+    db.with(|conn| {
+        let exists = conn.query_row("SELECT 1 FROM comments WHERE id = ?1", [id], |r| {
+            r.get::<_, i64>(0)
+        });
+        match exists {
+            Ok(_) => Ok(Some(comment_row(conn, id)?)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    })
+}
+
+pub fn delete_comment(db: &Db, id: i64) -> Result<bool> {
+    db.with(|conn| Ok(conn.execute("DELETE FROM comments WHERE id = ?1", [id])? > 0))
+}
+
+// ---------- Reactions ----------
+
+pub fn add_reaction(
+    db: &Db,
+    input: &crate::models::CreateReaction,
+) -> Result<crate::models::Comment> {
+    db.with(|conn| {
+        // Idempotent: same (comment, author, emoji) does not duplicate.
+        conn.execute(
+            "INSERT OR IGNORE INTO reactions (comment_id, author, emoji) VALUES (?1, ?2, ?3)",
+            rusqlite::params![input.comment_id, input.author, input.emoji],
+        )?;
+        comment_row(conn, input.comment_id)
+    })
+}
+
+pub fn remove_reaction(db: &Db, comment_id: i64, author: &str, emoji: &str) -> Result<bool> {
+    db.with(|conn| {
+        Ok(conn.execute(
+            "DELETE FROM reactions WHERE comment_id = ?1 AND author = ?2 AND emoji = ?3",
+            rusqlite::params![comment_id, author, emoji],
+        )? > 0)
+    })
+}

@@ -60,3 +60,43 @@ pub fn parse_ts(s: &str) -> DateTime<Utc> {
         })
         .unwrap_or_else(|_| Utc::now())
 }
+
+// ─── Comments & Reactions ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Comment {
+    pub id: i64,
+    pub todo_id: i64,
+    pub author: String,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub reactions: Vec<Reaction>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Reaction {
+    pub id: i64,
+    pub comment_id: i64,
+    pub author: String,
+    pub emoji: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Payload for creating a comment. `todo_id` is injected from the URL path.
+#[derive(Debug, Deserialize)]
+pub struct CreateComment {
+    #[serde(default)]
+    pub todo_id: i64,
+    pub author: String,
+    pub body: String,
+}
+
+/// Payload for adding a reaction to a comment. `comment_id` is injected from the URL path.
+#[derive(Debug, Deserialize)]
+pub struct CreateReaction {
+    #[serde(default)]
+    pub comment_id: i64,
+    pub author: String,
+    pub emoji: String,
+}
