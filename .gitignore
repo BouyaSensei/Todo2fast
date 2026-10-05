@@ -1,0 +1,22 @@
+# Rust
+backend/target/
+*.rs.bk
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/cypress/videos/
+frontend/cypress/screenshots/
+
+# Data & secrets
+*.sqlite
+*.db
+.env
+.env.*
+!/.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
