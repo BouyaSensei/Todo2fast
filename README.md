@@ -14,15 +14,16 @@ collaborez dessus : commentaires, réactions, tableaux partagés.
 - **Upload PDF & extraction de dates** — téléversez un PDF, récupérez son texte et les dates détectées. *(à venir)*
 - **Compréhension de documents** — transforme un document en tâches concrètes. Utilise un LLM local (Ollama) ou un modèle cloud quand disponible, avec un repli déterministe pour que ça fonctionne toujours. *(à venir)*
 
-> État actuel : le backend est fonctionnel et testé (tableaux, tâches,
-> commentaires, réactions). Le frontend et la compréhension de documents sont en cours.
+> État actuel : le backend (Rust) et le frontend (React/TypeScript) sont
+> fonctionnels et testés — tableaux, tâches, commentaires, réactions.
+> La collaboration avancée, l'upload PDF et la compréhension de documents sont en cours.
 
 ## Stack
 
 | Couche      | Tech                                        |
 |-------------|---------------------------------------------|
 | Backend     | Rust — `axum`, SQLite (`rusqlite` bundled)   |
-| Frontend    | React + TypeScript (Vite) *(à venir)*        |
+| Frontend    | React + TypeScript (Vite)                 |
 | Tests E2E   | Cypress *(à venir)*                          |
 | CI          | GitHub Actions : build, clippy, tests, `cargo audit` |
 
@@ -37,12 +38,12 @@ cargo fmt --all    # formatage
 cargo clippy --all-targets -- -D warnings   # lint strict
 ```
 
-### Frontend *(à venir)*
+### Frontend
 ```bash
 cd frontend
 npm install
-npm run dev        # serveur de dev Vite, proxy /api vers :8080
-npm run cy:e2e     # tests end-to-end Cypress
+npm run dev        # serveur de dev Vite sur :5173, proxy /api vers le backend :8080
+npm run build      # build de production dans dist/
 ```
 
 ## Installation (Windows)
