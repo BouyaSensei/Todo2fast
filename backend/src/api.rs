@@ -2,32 +2,54 @@
 
 use std::sync::Arc;
 
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
+};
+
+pub mod boards;
 
 /// Shared, immutable application state handed to every handler.
 #[derive(Clone)]
 pub struct AppState {
+    pub db: crate::db::Db,
     /// Human-readable build/version tag surfaced on the health endpoint.
     pub version: String,
 }
 
 impl AppState {
-    pub fn new() -> Self {
-        Self {
+    /// Build state from environment (used by `main`).
+    pub fn from_env() -> std::result::Result<Self, crate::db::DbError> {
+        let path = std::env::var("T2F_DB_PATH").unwrap_or_else(|_| "todo2fast.sqlite".into());
+        Ok(Self {
+            db: crate::db::Db::open(std::path::Path::new(&path))?,
             version: env!("CARGO_PKG_VERSION").to_string(),
-        }
+        })
+    }
+
+    /// In-memory state for tests.
+    pub fn in_memory() -> std::result::Result<Self, crate::db::DbError> {
+        Ok(Self {
+            db: crate::db::Db::open_in_memory()?,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        })
     }
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        Self::new()
+        Self::in_memory().expect("in-memory db")
     }
 }
 
 /// Route table. New feature modules are merged in here.
 pub fn routes() -> Router<Arc<AppState>> {
-    Router::new().route("/api/health", get(health))
+    Router::new()
+        .route("/api/health", get(health))
+        .merge(boards::routes())
 }
 
 async fn health(State(_state): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -36,6 +58,35 @@ async fn health(State(_state): State<Arc<AppState>>) -> Json<serde_json::Value> 
         "service": "todo2fast",
         "version": env!("CARGO_PKG_VERSION"),
     }))
+}
+
+/// Uniform API error → HTTP response mapping.
+pub struct ApiError(pub(crate) Response);
+
+impl ApiError {
+    pub fn not_found(what: &str) -> Self {
+        let body = Json(serde_json::json!({ "error": format!("{what} not found") }));
+        ApiError((StatusCode::NOT_FOUND, body).into_response())
+    }
+}
+
+impl From<(StatusCode, Json<serde_json::Value>)> for ApiError {
+    fn from((status, body): (StatusCode, Json<serde_json::Value>)) -> Self {
+        ApiError((status, body).into_response())
+    }
+}
+
+impl From<crate::db::DbError> for ApiError {
+    fn from(e: crate::db::DbError) -> Self {
+        tracing::error!(error = %e, "database error");
+        ApiError((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        self.0
+    }
 }
 
 #[cfg(test)]
@@ -58,7 +109,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_returns_ok() {
-        let app = build_router(Arc::new(AppState::new()));
+        let app = build_router(Arc::new(AppState::default()));
         let v = get(app, "/api/health").await;
         assert_eq!(v["status"], "ok");
         assert_eq!(v["service"], "todo2fast");

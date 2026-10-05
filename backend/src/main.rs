@@ -1,4 +1,7 @@
 pub mod api;
+pub mod db;
+pub mod models;
+pub mod repo;
 
 use std::sync::Arc;
 
@@ -29,7 +32,7 @@ async fn main() {
         )
         .init();
 
-    let state = Arc::new(api::AppState::new());
+    let state = Arc::new(api::AppState::from_env().expect("failed to open database"));
     let app = build_router(state);
 
     let addr: std::net::SocketAddr = std::env::var("T2F_ADDR")
