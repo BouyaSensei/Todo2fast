@@ -10,6 +10,8 @@ frontend/cypress/screenshots/
 
 # Data & secrets
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
 *.db
 .env
 .env.*
