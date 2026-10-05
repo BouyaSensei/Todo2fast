@@ -61,31 +61,39 @@ async fn health(State(_state): State<Arc<AppState>>) -> Json<serde_json::Value> 
 }
 
 /// Uniform API error → HTTP response mapping.
-pub struct ApiError(pub(crate) Response);
+/// Small struct (StatusCode + String) to avoid `clippy::result_large_err`.
+pub struct ApiError {
+    status: StatusCode,
+    message: String,
+}
 
 impl ApiError {
     pub fn not_found(what: &str) -> Self {
-        let body = Json(serde_json::json!({ "error": format!("{what} not found") }));
-        ApiError((StatusCode::NOT_FOUND, body).into_response())
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: format!("{what} not found"),
+        }
     }
-}
 
-impl From<(StatusCode, Json<serde_json::Value>)> for ApiError {
-    fn from((status, body): (StatusCode, Json<serde_json::Value>)) -> Self {
-        ApiError((status, body).into_response())
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: msg.into(),
+        }
     }
 }
 
 impl From<crate::db::DbError> for ApiError {
     fn from(e: crate::db::DbError) -> Self {
         tracing::error!(error = %e, "database error");
-        ApiError((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())
+        Self::internal(e.to_string())
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        self.0
+        let body = Json(serde_json::json!({ "error": self.message }));
+        (self.status, body).into_response()
     }
 }
 

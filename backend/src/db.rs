@@ -57,6 +57,25 @@ impl Db {
                 updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_todos_board ON todos(board_id);
+
+            CREATE TABLE IF NOT EXISTS comments (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                todo_id     INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+                author      TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_comments_todo ON comments(todo_id);
+
+            CREATE TABLE IF NOT EXISTS reactions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                comment_id  INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+                author      TEXT NOT NULL,
+                emoji       TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (comment_id, author, emoji)
+            );
+            CREATE INDEX IF NOT EXISTS idx_reactions_comment ON reactions(comment_id);
             "#,
         )?;
         Ok(())
