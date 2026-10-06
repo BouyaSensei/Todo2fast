@@ -13,6 +13,7 @@ use axum::{
 pub mod boards;
 pub mod comments;
 pub mod documents;
+pub mod lists;
 
 /// Shared, immutable application state handed to every handler.
 #[derive(Clone)]
@@ -54,6 +55,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(boards::routes())
         .merge(comments::routes())
         .merge(documents::routes())
+        .merge(lists::routes())
 }
 
 async fn health(State(_state): State<Arc<AppState>>) -> Json<serde_json::Value> {
