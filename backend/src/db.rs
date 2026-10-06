@@ -102,6 +102,15 @@ impl Db {
                 UNIQUE (todo_id, tag_id)
             );
             CREATE INDEX IF NOT EXISTS idx_todo_tags_todo ON todo_tags(todo_id);
+
+            CREATE TABLE IF NOT EXISTS board_members (
+                board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                name        TEXT NOT NULL,
+                role        TEXT NOT NULL DEFAULT 'member',
+                added_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (board_id, name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_board_members_board ON board_members(board_id);
             "#,
         )?;
         // Idempotent upgrade for databases created before the kanban lists existed.
@@ -127,6 +136,27 @@ impl Db {
             > 0;
         if !has_color {
             conn.execute("ALTER TABLE lists ADD COLUMN color TEXT", [])?;
+        }
+        // Idempotent upgrade for databases created before board access tracking.
+        let has_members: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='board_members'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        if !has_members {
+            conn.execute_batch(
+                "CREATE TABLE board_members (
+                    board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                    name        TEXT NOT NULL,
+                    role        TEXT NOT NULL DEFAULT 'member',
+                    added_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                    PRIMARY KEY (board_id, name)
+                );
+                CREATE INDEX idx_board_members_board ON board_members(board_id);",
+            )?;
         }
         Ok(())
     }

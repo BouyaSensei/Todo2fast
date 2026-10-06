@@ -505,6 +505,42 @@ textarea { resize: vertical; min-height: 70px; }
 .suggested-item .st { flex: 1; font-size: 13.5px; }
 .suggested-item input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 
+/* ─── Accès aux boards (membres) ──────────────────────────────────────────── */
+
+.muted { font-size: 13px; color: var(--text-2); }
+
+.member-list { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.member-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 12px;
+  animation: t2f-fade-up 0.24s var(--ease-out) both;
+}
+.member-row .avatar {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  background: var(--bg-3); display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; color: var(--accent);
+}
+.member-row.owner .avatar { border: 1.5px solid var(--accent-border); }
+.member-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.role-badge {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 3px 9px; border-radius: 20px; flex-shrink: 0;
+}
+.role-badge.owner { color: var(--accent); background: var(--accent-dim); border: 1px solid var(--accent-border); }
+.role-badge.member { color: var(--text-2); background: var(--bg-3); border: 1px solid var(--border); }
+
+.member-x { width: 24px; height: 24px; opacity: 0.55; flex-shrink: 0; }
+.member-x:hover { opacity: 1; color: var(--danger); background: rgba(240,106,106,0.12); }
+
+.member-add { display: flex; gap: 8px; align-items: center; }
+.member-add input { flex: 1; min-width: 0; }
+.member-role {
+  background: var(--bg-2); color: var(--text-1); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 10px; font-size: 13px; cursor: pointer;
+}
+
 /* ─── Divers ──────────────────────────────────────────────────────────────── */
 
 .empty-state {

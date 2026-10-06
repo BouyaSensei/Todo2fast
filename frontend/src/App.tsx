@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { api, type Board, type Comment, type DocumentAnalysis, type List, type Tag, type Todo } from './api'
+import { api, type Board, type Comment, type DocumentAnalysis, type List, type Member, type Tag, type Todo } from './api'
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 
@@ -54,12 +54,14 @@ export default function App() {
   const [lists, setLists] = useState<List[]>([])
   const [todos, setTodos] = useState<Todo[]>([])
   const [tags, setTags] = useState<Tag[]>([])
+  const [members, setMembers] = useState<Member[]>([])
   const [loadingBoard, setLoadingBoard] = useState(false)
 
   const [toasts, setToasts] = useState<Toast[]>([])
   const [detailTodoId, setDetailTodoId] = useState<number | null>(null)
   const [showImport, setShowImport] = useState(false)
   const [showNewBoard, setShowNewBoard] = useState(false)
+  const [showAccess, setShowAccess] = useState(false)
 
   const notify = useCallback((msg: string, kind: Toast['kind'] = 'success') => {
     const id = ++toastSeq
@@ -84,14 +86,16 @@ export default function App() {
   const loadBoard = useCallback(async (boardId: number) => {
     setLoadingBoard(true)
     try {
-      const [ls, ts, tg] = await Promise.all([
+      const [ls, ts, tg, mb] = await Promise.all([
         api.listLists(boardId),
         api.listTodos(boardId),
         api.listTags(boardId),
+        api.listMembers(boardId),
       ])
       setLists(ls.sort((a, b) => a.position - b.position))
       setTodos(ts.sort((a, b) => a.position - b.position))
       setTags(tg)
+      setMembers(mb)
     } catch (e) {
       notify(`Erreur board: ${(e as Error).message}`, 'error')
     } finally {
@@ -101,13 +105,13 @@ export default function App() {
 
   useEffect(() => {
     if (activeBoardId != null) loadBoard(activeBoardId)
-    else { setLists([]); setTodos([]); setTags([]) }
+    else { setLists([]); setTodos([]); setTags([]); setMembers([]) }
   }, [activeBoardId, loadBoard])
 
   // ─── Actions boards ───────────────────────────────────────────────────────
   const createBoard = async (name: string) => {
     try {
-      const b = await api.createBoard(name)
+      const b = await api.createBoard(name, user)
       setShowNewBoard(false)
       setBoards(prev => [...prev, b])
       setActiveBoardId(b.id)
@@ -216,6 +220,25 @@ export default function App() {
     } catch (e) { notify((e as Error).message, 'error') }
   }
 
+  // ─── Actions accès (membres du board) ─────────────────────────────────────
+  const addMember = async (name: string, role: 'owner' | 'member') => {
+    if (!activeBoardId || !name.trim()) return
+    try {
+      const m = await api.addMember(activeBoardId, name.trim(), role)
+      setMembers(prev => [...prev.filter(x => x.name !== m.name), m])
+      notify(`${m.name} a accès au board`)
+    } catch (e) { notify((e as Error).message, 'error') }
+  }
+
+  const removeMember = async (name: string) => {
+    if (!activeBoardId) return
+    try {
+      await api.removeMember(activeBoardId, name)
+      setMembers(prev => prev.filter(x => x.name !== name))
+      notify(`${name} retiré du board`)
+    } catch (e) { notify((e as Error).message, 'error') }
+  }
+
   // Drag & drop de cartes entre colonnes
   const onDropCard = async (cardId: number, targetListId: number | null) => {
     const card = todos.find(t => t.id === cardId)
@@ -252,7 +275,9 @@ export default function App() {
       <div className="main">
         <BoardHeader
           board={activeBoard}
+          membersCount={members.length}
           onImport={() => setShowImport(true)}
+          onAccess={() => setShowAccess(true)}
           onNewBoard={() => setShowNewBoard(true)}
         />
 
@@ -304,6 +329,16 @@ export default function App() {
 
       {showNewBoard && (
         <NewBoardModal onCreate={createBoard} onClose={() => setShowNewBoard(false)} />
+      )}
+
+      {showAccess && activeBoard && (
+        <AccessModal
+          boardName={activeBoard.name}
+          members={members}
+          onAdd={addMember}
+          onRemove={removeMember}
+          onClose={() => setShowAccess(false)}
+        />
       )}
 
       <div className="toast-wrap">
@@ -371,7 +406,9 @@ function Sidebar(props: {
 
 // ─── En-tête du board ────────────────────────────────────────────────────────
 
-function BoardHeader({ board, onImport, onNewBoard }: { board: Board | null; onImport: () => void; onNewBoard: () => void }) {
+function BoardHeader({ board, membersCount, onImport, onAccess, onNewBoard }: {
+  board: Board | null; membersCount: number; onImport: () => void; onAccess: () => void; onNewBoard: () => void
+}) {
   return (
     <header className="board-header">
       {board ? (
@@ -383,7 +420,14 @@ function BoardHeader({ board, onImport, onNewBoard }: { board: Board | null; onI
         <h1>Todo2fast</h1>
       )}
       <div className="spacer" />
-      {board && <button className="btn btn-primary" onClick={onImport}>📄 Importer un PDF</button>}
+      {board && (
+        <>
+          <button className="btn btn-ghost" onClick={onAccess}>
+            👥 Accès{membersCount > 0 ? ` (${membersCount})` : ''}
+          </button>
+          <button className="btn btn-primary" onClick={onImport}>📄 Importer un PDF</button>
+        </>
+      )}
       {!board && <button className="btn btn-primary" onClick={onNewBoard}>+ Nouveau board</button>}
     </header>
   )
@@ -922,6 +966,66 @@ function NewBoardModal({ onCreate, onClose }: { onCreate: (name: string) => void
         <div className="modal-foot">
           <button className="btn" onClick={onClose}>Annuler</button>
           <button className="btn btn-primary" disabled={!name.trim()} onClick={() => onCreate(name.trim())}>Créer</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Modale d'accès aux boards (membres) ─────────────────────────────────────
+
+function AccessModal(props: {
+  boardName: string; members: Member[]
+  onAdd: (name: string, role: 'owner' | 'member') => void
+  onRemove: (name: string) => void
+  onClose: () => void
+}) {
+  const [name, setName] = useState('')
+  const [role, setRole] = useState<'owner' | 'member'>('member')
+
+  const submit = () => {
+    if (!name.trim()) return
+    props.onAdd(name.trim(), role)
+    setName('')
+    setRole('member')
+  }
+
+  return (
+    <div className="overlay" onClick={props.onClose}>
+      <div className="modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2>Accès à « {props.boardName} »</h2>
+          <button className="icon-btn" onClick={props.onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div className="section-label">Qui a accès</div>
+          {props.members.length === 0 ? (
+            <p className="muted" style={{ margin: '4px 0 12px' }}>Personne pour l'instant. Ajoutez des membres ci-dessous.</p>
+          ) : (
+            <ul className="member-list">
+              {props.members.map(m => (
+                <li key={m.name} className={`member-row ${m.role}`}>
+                  <span className="avatar" style={{ width: 28, height: 28, fontSize: 11 }}>{initials(m.name)}</span>
+                  <span className="member-name">{m.name}</span>
+                  <span className={`role-badge ${m.role}`}>{m.role === 'owner' ? 'propriétaire' : 'membre'}</span>
+                  <button className="icon-btn member-x" title="Retirer de l'accès" onClick={() => props.onRemove(m.name)}>✕</button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="section-label" style={{ marginTop: 14 }}>Ajouter un membre</div>
+          <div className="member-add">
+            <input
+              value={name} onChange={(e) => setName(e.target.value)} placeholder="Nom de la personne…"
+              onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+            />
+            <select value={role} onChange={(e) => setRole(e.target.value as 'owner' | 'member')} className="member-role">
+              <option value="member">membre</option>
+              <option value="owner">propriétaire</option>
+            </select>
+            <button className="btn btn-primary" disabled={!name.trim()} onClick={submit}>Ajouter</button>
+          </div>
         </div>
       </div>
     </div>

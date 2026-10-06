@@ -2,8 +2,8 @@
 
 use crate::db::{Db, DbError};
 use crate::models::{
-    parse_ts, Board, CreateBoard, CreateList, CreateTag, CreateTodo, List, Tag, Todo, UpdateList,
-    UpdateTodo,
+    parse_ts, Board, CreateBoard, CreateList, CreateMember, CreateTag, CreateTodo, List, Member,
+    Tag, Todo, UpdateList, UpdateTodo,
 };
 
 pub type Result<T> = std::result::Result<T, DbError>;
@@ -17,6 +17,13 @@ pub fn create_board(db: &Db, input: &CreateBoard) -> Result<Board> {
             rusqlite::params![input.name],
         )?;
         let id = conn.last_insert_rowid();
+        // The creator becomes the board owner.
+        if let Some(owner) = input.owner.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            conn.execute(
+                "INSERT OR IGNORE INTO board_members (board_id, name, role) VALUES (?1, ?2, 'owner')",
+                rusqlite::params![id, owner],
+            )?;
+        }
         board_row(conn, id)
     })
 }
@@ -509,4 +516,73 @@ pub fn remove_tag_from_todo(db: &Db, todo_id: i64, tag_id: i64) -> Result<Option
         Ok(())
     })?;
     get_todo(db, todo_id)
+}
+
+// ---------- Board members (access) ----------
+
+fn member_row(conn: &mut rusqlite::Connection, board_id: i64, name: &str) -> Result<Member> {
+    let (role, added_at): (String, String) = conn.query_row(
+        "SELECT role, added_at FROM board_members WHERE board_id = ?1 AND name = ?2",
+        rusqlite::params![board_id, name],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    Ok(Member {
+        name: name.to_string(),
+        role,
+        added_at: parse_ts(&added_at),
+    })
+}
+
+/// Add a person to a board. Idempotent for the same `(board, name)`;
+/// an existing member keeps their current role.
+pub fn add_member(db: &Db, input: &CreateMember) -> Result<Member> {
+    let role = match input.role.as_deref().map(str::trim) {
+        Some(r) if !r.is_empty() => r.to_string(),
+        _ => "member".to_string(),
+    };
+    db.with(|conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO board_members (board_id, name, role) VALUES (?1, ?2, ?3)",
+            rusqlite::params![input.board_id, input.name, role],
+        )?;
+        member_row(conn, input.board_id, &input.name)
+    })
+}
+
+/// Everyone with access to the board, owners first.
+pub fn list_members(db: &Db, board_id: i64) -> Result<Vec<Member>> {
+    db.with(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT name, role, added_at FROM board_members WHERE board_id = ?1 \
+             ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, name",
+        )?;
+        let rows = stmt.query_map([board_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (name, role, added_at) = row?;
+            out.push(Member {
+                name,
+                role,
+                added_at: parse_ts(&added_at),
+            });
+        }
+        Ok(out)
+    })
+}
+
+/// Remove a person from the board. The owner can be removed (the board then
+/// has no recorded owner); returns `false` when the member was not present.
+pub fn remove_member(db: &Db, board_id: i64, name: &str) -> Result<bool> {
+    db.with(|conn| {
+        Ok(conn.execute(
+            "DELETE FROM board_members WHERE board_id = ?1 AND name = ?2",
+            rusqlite::params![board_id, name],
+        )? > 0)
+    })
 }

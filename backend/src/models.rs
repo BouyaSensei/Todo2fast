@@ -66,6 +66,9 @@ pub struct Todo {
 #[derive(Debug, Deserialize)]
 pub struct CreateBoard {
     pub name: String,
+    /// Name of the person who owns the board; recorded as an `owner` member.
+    #[serde(default)]
+    pub owner: Option<String>,
 }
 
 /// Payload for creating a todo. `due_date` is an ISO date string.
@@ -111,6 +114,26 @@ pub struct CreateTag {
     /// Hex color (e.g. `#35c9dd`). Defaults to the accent when omitted.
     #[serde(default)]
     pub color: Option<String>,
+}
+
+/// A person with access to a board (`owner` or `member`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Member {
+    pub name: String,
+    /// `"owner"` or `"member"`.
+    pub role: String,
+    pub added_at: DateTime<Utc>,
+}
+
+/// Payload for adding a member to a board. `board_id` is injected from the URL path.
+#[derive(Debug, Deserialize)]
+pub struct CreateMember {
+    #[serde(default)]
+    pub board_id: i64,
+    pub name: String,
+    /// Defaults to `"member"` when omitted.
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 /// Parse a stored `datetime('now')` UTC string into a `DateTime<Utc>`.

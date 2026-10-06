@@ -21,6 +21,12 @@ export interface Tag {
   color: string
 }
 
+export interface Member {
+  name: string
+  role: 'owner' | 'member'
+  added_at: string
+}
+
 export interface Todo {
   id: number
   board_id: number
@@ -94,9 +100,17 @@ async function http<T>(method: string, url: string, body?: unknown): Promise<T> 
 export const api = {
   // Boards
   listBoards: () => http<Board[]>('GET', '/api/boards'),
-  createBoard: (name: string) => http<Board>('POST', '/api/boards', { name }),
+  createBoard: (name: string, owner?: string) =>
+    http<Board>('POST', '/api/boards', { name, ...(owner ? { owner } : {}) }),
   getBoard: (id: number) => http<Board>('GET', `/api/boards/${id}`),
   deleteBoard: (id: number) => http<void>('DELETE', `/api/boards/${id}`),
+
+  // Accès aux boards (membres)
+  listMembers: (boardId: number) => http<Member[]>('GET', `/api/boards/${boardId}/members`),
+  addMember: (boardId: number, name: string, role?: 'owner' | 'member') =>
+    http<Member>('POST', `/api/boards/${boardId}/members`, { name, ...(role ? { role } : {}) }),
+  removeMember: (boardId: number, name: string) =>
+    http<void>('DELETE', `/api/boards/${boardId}/members`, { name }),
 
   // Colonnes kanban
   listLists: (boardId: number) => http<List[]>('GET', `/api/boards/${boardId}/lists`),

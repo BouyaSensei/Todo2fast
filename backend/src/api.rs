@@ -14,6 +14,7 @@ pub mod boards;
 pub mod comments;
 pub mod documents;
 pub mod lists;
+pub mod members;
 pub mod tags;
 
 /// Shared, immutable application state handed to every handler.
@@ -58,6 +59,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(documents::routes())
         .merge(lists::routes())
         .merge(tags::routes())
+        .merge(members::routes())
 }
 
 async fn health(State(_state): State<Arc<AppState>>) -> Json<serde_json::Value> {
