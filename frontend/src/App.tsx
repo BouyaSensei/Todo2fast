@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { api, type Board, type Comment, type DocumentAnalysis, type List, type Todo } from './api'
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
@@ -347,8 +347,9 @@ function BoardCanvas(props: {
 
   return (
     <div className="board-canvas">
-      {props.lists.map(l => (
+      {props.lists.map((l, i) => (
         <Column key={l.id} list={l} todos={props.todos.filter(t => t.list_id === l.id)}
+          style={{ animationDelay: `${Math.min(i, 10) * 60}ms` }}
           onRename={(t) => props.onRenameList(l.id, t)} onDelete={() => props.onDeleteList(l.id)}
           onAddTodo={(title) => props.onAddTodo(l.id, title)}
           onDropCard={props.onDropCard} onOpenTodo={props.onOpenTodo} />
@@ -399,7 +400,7 @@ function UnassignedZone(props: {
           if (id) props.onDropCard(id, null)
         }}
       >
-        {props.todos.map(t => <Card key={t.id} todo={t} onOpen={() => props.onOpenTodo(t.id)} />)}
+        {props.todos.map((t, i) => <Card key={t.id} todo={t} index={i} onOpen={() => props.onOpenTodo(t.id)} />)}
       </div>
     </div>
   )
@@ -408,7 +409,7 @@ function UnassignedZone(props: {
 // ─── Colonne kanban ──────────────────────────────────────────────────────────
 
 function Column(props: {
-  list: List; todos: Todo[]
+  list: List; todos: Todo[]; style?: CSSProperties
   onRename: (title: string) => void; onDelete: () => void
   onAddTodo: (title: string) => void; onDropCard: (cardId: number, listId: number | null) => void
   onOpenTodo: (id: number) => void
@@ -420,7 +421,7 @@ function Column(props: {
   const [dragOver, setDragOver] = useState(false)
 
   return (
-    <div className="column">
+    <div className="column" style={props.style}>
       <div className="column-head">
         {editingTitle ? (
           <input
@@ -446,8 +447,8 @@ function Column(props: {
           if (id) props.onDropCard(id, props.list.id)
         }}
       >
-        {props.todos.map(t => (
-          <Card key={t.id} todo={t} onOpen={() => props.onOpenTodo(t.id)} />
+        {props.todos.map((t, i) => (
+          <Card key={t.id} todo={t} index={i} onOpen={() => props.onOpenTodo(t.id)} />
         ))}
       </div>
 
@@ -472,11 +473,12 @@ function Column(props: {
 
 // ─── Carte ───────────────────────────────────────────────────────────────────
 
-function Card({ todo, onOpen }: { todo: Todo; onOpen: () => void }) {
+function Card({ todo, onOpen, index = 0 }: { todo: Todo; onOpen: () => void; index?: number }) {
   const [dragging, setDragging] = useState(false)
   return (
     <div
       className={`card ${todo.done ? 'done' : ''} ${dragging ? 'dragging' : ''}`}
+      style={{ animation: 't2f-fade-in 0.3s var(--ease-out) both', animationDelay: `${Math.min(index, 12) * 45}ms` }}
       draggable
       onDragStart={(e) => { e.dataTransfer.setData('text/todo-id', String(todo.id)); setDragging(true) }}
       onDragEnd={() => setDragging(false)}
