@@ -10,10 +10,30 @@ pub struct Board {
     pub created_at: DateTime<Utc>,
 }
 
+/// A kanban column on a board (Trello/Asana-style).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct List {
+    pub id: i64,
+    pub board_id: i64,
+    pub title: String,
+    pub position: i64,
+}
+
+/// Payload for creating a list on a board. `board_id` is injected from the URL path.
+#[derive(Debug, Deserialize)]
+pub struct CreateList {
+    #[serde(default)]
+    pub board_id: i64,
+    pub title: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Todo {
     pub id: i64,
     pub board_id: i64,
+    /// Kanban column the card belongs to (`None` = unassigned).
+    #[serde(default)]
+    pub list_id: Option<i64>,
     pub title: String,
     #[serde(default)]
     pub description: String,
@@ -39,6 +59,9 @@ pub struct CreateTodo {
     pub description: Option<String>,
     #[serde(default)]
     pub due_date: Option<String>,
+    /// Kanban column to place the card in (defaults to unassigned).
+    #[serde(default)]
+    pub list_id: Option<i64>,
 }
 
 /// Partial update payload for a todo (all fields optional).
@@ -49,6 +72,8 @@ pub struct UpdateTodo {
     pub due_date: Option<Option<String>>,
     pub done: Option<bool>,
     pub position: Option<i64>,
+    /// Move the card to a different kanban column (`Some(None)` clears it).
+    pub list_id: Option<Option<i64>>,
 }
 
 /// Parse a stored `datetime('now')` UTC string into a `DateTime<Utc>`.

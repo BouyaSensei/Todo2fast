@@ -6,7 +6,7 @@ description = "Todo2fast — collaborative todo manager with document comprehens
 license = "MIT"
 
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 serde = { version = "1", features = ["derive"] }
@@ -16,6 +16,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
+pdf-extract = "0.12"
+regex = "1"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -45,9 +45,18 @@ impl Db {
                 created_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS lists (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                title       TEXT NOT NULL,
+                position    INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_lists_board ON lists(board_id);
+
             CREATE TABLE IF NOT EXISTS todos (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                list_id     INTEGER REFERENCES lists(id) ON DELETE SET NULL,
                 title       TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 due_date    TEXT,
@@ -78,6 +87,18 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_reactions_comment ON reactions(comment_id);
             "#,
         )?;
+        // Idempotent upgrade for databases created before the kanban lists existed.
+        let has_list_id: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('todos') WHERE name = 'list_id'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        if !has_list_id {
+            conn.execute("ALTER TABLE todos ADD COLUMN list_id INTEGER REFERENCES lists(id) ON DELETE SET NULL", [])?;
+        }
         Ok(())
     }
 

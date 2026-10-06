@@ -1,7 +1,7 @@
 //! Data-access functions for boards and todos.
 
 use crate::db::{Db, DbError};
-use crate::models::{parse_ts, Board, CreateBoard, CreateTodo, Todo, UpdateTodo};
+use crate::models::{parse_ts, Board, CreateBoard, CreateList, CreateTodo, List, Todo, UpdateTodo};
 
 pub type Result<T> = std::result::Result<T, DbError>;
 
@@ -71,11 +71,79 @@ fn board_row(conn: &mut rusqlite::Connection, id: i64) -> Result<Board> {
     })
 }
 
+// ---------- Lists (kanban columns) ----------
+
+fn list_row(conn: &mut rusqlite::Connection, id: i64) -> Result<List> {
+    let (board_id, title, position): (i64, String, i64) = conn.query_row(
+        "SELECT board_id, title, position FROM lists WHERE id = ?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    Ok(List {
+        id,
+        board_id,
+        title,
+        position,
+    })
+}
+
+pub fn create_list(db: &Db, board_id: i64, input: &CreateList) -> Result<List> {
+    db.with(|conn| {
+        let position: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM lists WHERE board_id = ?1",
+            [board_id],
+            |r| r.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO lists (board_id, title, position) VALUES (?1, ?2, ?3)",
+            rusqlite::params![board_id, input.title, position],
+        )?;
+        list_row(conn, conn.last_insert_rowid())
+    })
+}
+
+pub fn list_lists(db: &Db, board_id: i64) -> Result<Vec<List>> {
+    db.with(|conn| {
+        let ids: Vec<i64> = {
+            let mut stmt =
+                conn.prepare("SELECT id FROM lists WHERE board_id = ?1 ORDER BY position, id")?;
+            let collected = stmt
+                .query_map([board_id], |r| r.get(0))?
+                .collect::<std::result::Result<_, _>>()?;
+            collected
+        };
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            out.push(list_row(conn, id)?);
+        }
+        Ok(out)
+    })
+}
+
+pub fn rename_list(db: &Db, id: i64, title: &str) -> Result<Option<List>> {
+    db.with(|conn| {
+        let n = conn.execute(
+            "UPDATE lists SET title = ?1 WHERE id = ?2",
+            rusqlite::params![title, id],
+        )?;
+        if n == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(list_row(conn, id)?))
+        }
+    })
+}
+
+pub fn delete_list(db: &Db, id: i64) -> Result<bool> {
+    db.with(|conn| Ok(conn.execute("DELETE FROM lists WHERE id = ?1", [id])? > 0))
+}
+
 // ---------- Todos ----------
 
 fn todo_row(conn: &mut rusqlite::Connection, id: i64) -> Result<Todo> {
-    let (board_id, title, description, due_date, done, position, created_at, updated_at): (
+    let (board_id, list_id, title, description, due_date, done, position, created_at, updated_at): (
         i64,
+        Option<i64>,
         String,
         String,
         Option<String>,
@@ -84,7 +152,7 @@ fn todo_row(conn: &mut rusqlite::Connection, id: i64) -> Result<Todo> {
         String,
         String,
     ) = conn.query_row(
-        "SELECT board_id, title, description, due_date, done, position, created_at, updated_at
+        "SELECT board_id, list_id, title, description, due_date, done, position, created_at, updated_at
          FROM todos WHERE id = ?1",
         [id],
         |r| {
@@ -97,12 +165,14 @@ fn todo_row(conn: &mut rusqlite::Connection, id: i64) -> Result<Todo> {
                 r.get(5)?,
                 r.get(6)?,
                 r.get(7)?,
+                r.get(8)?,
             ))
         },
     )?;
     Ok(Todo {
         id,
         board_id,
+        list_id,
         title,
         description,
         due_date,
@@ -121,10 +191,11 @@ pub fn create_todo(db: &Db, board_id: i64, input: &CreateTodo) -> Result<Todo> {
             |r| r.get(0),
         )?;
         conn.execute(
-            "INSERT INTO todos (board_id, title, description, due_date, position)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO todos (board_id, list_id, title, description, due_date, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
                 board_id,
+                input.list_id,
                 input.title,
                 input.description.clone().unwrap_or_default(),
                 input.due_date.clone(),
@@ -180,10 +251,22 @@ pub fn update_todo(db: &Db, id: i64, patch: &UpdateTodo) -> Result<Option<Todo>>
         };
         let done = patch.done.unwrap_or(current.done);
         let position = patch.position.unwrap_or(current.position);
+        let list_id = match &patch.list_id {
+            Some(v) => *v,
+            None => current.list_id,
+        };
         conn.execute(
             "UPDATE todos SET title=?1, description=?2, due_date=?3, done=?4, position=?5,
-             updated_at=datetime('now') WHERE id=?6",
-            rusqlite::params![title, description, due_date, done as i64, position, id],
+             list_id=?6, updated_at=datetime('now') WHERE id=?7",
+            rusqlite::params![
+                title,
+                description,
+                due_date,
+                done as i64,
+                position,
+                list_id,
+                id
+            ],
         )?;
         Ok(Some(todo_row(conn, id)?))
     })

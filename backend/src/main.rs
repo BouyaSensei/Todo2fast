@@ -1,6 +1,7 @@
 pub mod api;
 pub mod db;
 pub mod models;
+pub mod pdf_extract;
 pub mod repo;
 
 use std::sync::Arc;
