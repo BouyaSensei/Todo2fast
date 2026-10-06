@@ -400,12 +400,18 @@ function BoardCanvas(props: {
 }) {
   const [addingList, setAddingList] = useState(false)
   const [newListTitle, setNewListTitle] = useState('')
+  // État global du drag & drop : carte en cours + colonne cible (zone de drop large).
+  const [draggingId, setDraggingId] = useState<number | null>(null)
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
 
   return (
-    <div className="board-canvas">
+    <div className={`board-canvas ${draggingId != null ? 'is-dragging' : ''}`}>
       {props.lists.map((l, i) => (
         <Column key={l.id} list={l} todos={props.todos.filter(t => t.list_id === l.id)}
           style={{ animationDelay: `${Math.min(i, 10) * 60}ms` }}
+          isDropTarget={dropTarget === `list-${l.id}`}
+          onDragStartCard={setDraggingId} onDragEndCard={() => { setDraggingId(null); setDropTarget(null) }}
+          onDragOverCol={(over) => setDropTarget(over ? `list-${l.id}` : null)}
           onRename={(t) => props.onRenameList(l.id, t)}
           onSetColor={(c) => props.onSetListColor(l.id, c)}
           onDelete={() => props.onDeleteList(l.id)}
@@ -414,6 +420,9 @@ function BoardCanvas(props: {
       ))}
 
       <UnassignedZone todos={props.todos.filter(t => t.list_id === null)}
+        isDropTarget={dropTarget === 'unassigned'}
+        onDragOverCol={(over) => setDropTarget(over ? 'unassigned' : null)}
+        onDragStartCard={setDraggingId} onDragEndCard={() => { setDraggingId(null); setDropTarget(null) }}
         onDropCard={props.onDropCard} onOpenTodo={props.onOpenTodo} />
 
       {addingList ? (
@@ -438,27 +447,35 @@ function BoardCanvas(props: {
 // ─── Zone « Sans colonne » (tâches importées / non classées) ────────────────
 
 function UnassignedZone(props: {
-  todos: Todo[]; onDropCard: (cardId: number, listId: number | null) => void; onOpenTodo: (id: number) => void
+  todos: Todo[]; isDropTarget: boolean
+  onDragOverCol: (over: boolean) => void
+  onDragStartCard: (id: number) => void; onDragEndCard: () => void
+  onDropCard: (cardId: number, listId: number | null) => void; onOpenTodo: (id: number) => void
 }) {
-  const [dragOver, setDragOver] = useState(false)
-  if (props.todos.length === 0) return null
+  const empty = props.todos.length === 0
+  // Pendant un drag, la zone reste visible pour servir de cible large.
+  if (empty && !props.isDropTarget) return null
   return (
-    <div className="column unassigned">
+    <div
+      className={`column unassigned ${props.isDropTarget ? 'drop-target' : ''}`}
+      onDragOver={(e) => { e.preventDefault(); props.onDragOverCol(true) }}
+      onDragLeave={() => props.onDragOverCol(false)}
+      onDrop={(e) => {
+        e.preventDefault(); props.onDragOverCol(false)
+        const id = Number(e.dataTransfer.getData('text/todo-id'))
+        if (id) props.onDropCard(id, null)
+      }}
+    >
       <div className="column-head">
         <span className="title">Sans colonne</span>
         <span className="count">{props.todos.length}</span>
       </div>
-      <div
-        className={`column-body ${dragOver ? 'drop-target' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault(); setDragOver(false)
-          const id = Number(e.dataTransfer.getData('text/todo-id'))
-          if (id) props.onDropCard(id, null)
-        }}
-      >
-        {props.todos.map((t, i) => <Card key={t.id} todo={t} index={i} onOpen={() => props.onOpenTodo(t.id)} />)}
+      <div className="column-body drop-zone">
+        {props.todos.map((t, i) => (
+          <Card key={t.id} todo={t} index={i} onOpen={() => props.onOpenTodo(t.id)}
+            onDragStartCard={props.onDragStartCard} onDragEndCard={props.onDragEndCard} />
+        ))}
+        {empty && <div className="drop-hint">Déposez ici pour retirer la colonne</div>}
       </div>
     </div>
   )
@@ -467,7 +484,8 @@ function UnassignedZone(props: {
 // ─── Colonne kanban ──────────────────────────────────────────────────────────
 
 function Column(props: {
-  list: List; todos: Todo[]; style?: CSSProperties
+  list: List; todos: Todo[]; style?: CSSProperties; isDropTarget: boolean
+  onDragStartCard: (id: number) => void; onDragEndCard: () => void; onDragOverCol: (over: boolean) => void
   onRename: (title: string) => void; onSetColor: (color: string) => void; onDelete: () => void
   onAddTodo: (title: string) => void; onDropCard: (cardId: number, listId: number | null) => void
   onOpenTodo: (id: number) => void
@@ -476,13 +494,22 @@ function Column(props: {
   const [titleDraft, setTitleDraft] = useState(props.list.title)
   const [addingCard, setAddingCard] = useState(false)
   const [cardDraft, setCardDraft] = useState('')
-  const [dragOver, setDragOver] = useState(false)
   const [showColors, setShowColors] = useState(false)
 
   const accent = props.list.color ?? 'transparent'
 
   return (
-    <div className="column" style={{ ...props.style, ['--list-accent' as string]: accent }}>
+    <div
+      className={`column ${props.isDropTarget ? 'drop-target' : ''}`}
+      style={{ ...props.style, ['--list-accent' as string]: accent }}
+      onDragOver={(e) => { e.preventDefault(); props.onDragOverCol(true) }}
+      onDragLeave={() => props.onDragOverCol(false)}
+      onDrop={(e) => {
+        e.preventDefault(); props.onDragOverCol(false)
+        const id = Number(e.dataTransfer.getData('text/todo-id'))
+        if (id) props.onDropCard(id, props.list.id)
+      }}
+    >
       <div className="column-head">
         {editingTitle ? (
           <input
@@ -526,19 +553,12 @@ function Column(props: {
         </>
       )}
 
-      <div
-        className={`column-body ${dragOver ? 'drop-target' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault(); setDragOver(false)
-          const id = Number(e.dataTransfer.getData('text/todo-id'))
-          if (id) props.onDropCard(id, props.list.id)
-        }}
-      >
+      <div className="column-body drop-zone">
         {props.todos.map((t, i) => (
-          <Card key={t.id} todo={t} index={i} onOpen={() => props.onOpenTodo(t.id)} />
+          <Card key={t.id} todo={t} index={i} onOpen={() => props.onOpenTodo(t.id)}
+            onDragStartCard={props.onDragStartCard} onDragEndCard={props.onDragEndCard} />
         ))}
+        {props.todos.length === 0 && <div className="drop-hint">Déposez une carte ici</div>}
       </div>
 
       <div className="add-card-row">
@@ -562,15 +582,18 @@ function Column(props: {
 
 // ─── Carte ───────────────────────────────────────────────────────────────────
 
-function Card({ todo, onOpen, index = 0 }: { todo: Todo; onOpen: () => void; index?: number }) {
+function Card({ todo, onOpen, index = 0, onDragStartCard, onDragEndCard }: {
+  todo: Todo; onOpen: () => void; index?: number
+  onDragStartCard?: (id: number) => void; onDragEndCard?: () => void
+}) {
   const [dragging, setDragging] = useState(false)
   return (
     <div
       className={`card ${todo.done ? 'done' : ''} ${dragging ? 'dragging' : ''}`}
       style={{ animation: 't2f-fade-in 0.3s var(--ease-out) both', animationDelay: `${Math.min(index, 12) * 45}ms` }}
       draggable
-      onDragStart={(e) => { e.dataTransfer.setData('text/todo-id', String(todo.id)); setDragging(true) }}
-      onDragEnd={() => setDragging(false)}
+      onDragStart={(e) => { e.dataTransfer.setData('text/todo-id', String(todo.id)); setDragging(true); onDragStartCard?.(todo.id) }}
+      onDragEnd={() => { setDragging(false); onDragEndCard?.() }}
       onClick={onOpen}
     >
       <div className="card-title">{todo.title}</div>
