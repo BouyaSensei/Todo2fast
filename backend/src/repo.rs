@@ -1,7 +1,9 @@
 //! Data-access functions for boards and todos.
 
 use crate::db::{Db, DbError};
-use crate::models::{parse_ts, Board, CreateBoard, CreateList, CreateTodo, List, Todo, UpdateTodo};
+use crate::models::{
+    parse_ts, Board, CreateBoard, CreateList, CreateTodo, List, Todo, UpdateList, UpdateTodo,
+};
 
 pub type Result<T> = std::result::Result<T, DbError>;
 
@@ -74,15 +76,16 @@ fn board_row(conn: &mut rusqlite::Connection, id: i64) -> Result<Board> {
 // ---------- Lists (kanban columns) ----------
 
 fn list_row(conn: &mut rusqlite::Connection, id: i64) -> Result<List> {
-    let (board_id, title, position): (i64, String, i64) = conn.query_row(
-        "SELECT board_id, title, position FROM lists WHERE id = ?1",
+    let (board_id, title, color, position): (i64, String, Option<String>, i64) = conn.query_row(
+        "SELECT board_id, title, color, position FROM lists WHERE id = ?1",
         [id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
     )?;
     Ok(List {
         id,
         board_id,
         title,
+        color,
         position,
     })
 }
@@ -95,8 +98,8 @@ pub fn create_list(db: &Db, board_id: i64, input: &CreateList) -> Result<List> {
             |r| r.get(0),
         )?;
         conn.execute(
-            "INSERT INTO lists (board_id, title, position) VALUES (?1, ?2, ?3)",
-            rusqlite::params![board_id, input.title, position],
+            "INSERT INTO lists (board_id, title, color, position) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![board_id, input.title, input.color, position],
         )?;
         list_row(conn, conn.last_insert_rowid())
     })
@@ -120,17 +123,25 @@ pub fn list_lists(db: &Db, board_id: i64) -> Result<Vec<List>> {
     })
 }
 
-pub fn rename_list(db: &Db, id: i64, title: &str) -> Result<Option<List>> {
+/// Partial update of a list (title and/or color). `color` is tri-state:
+/// absent = unchanged, `Some("")` = reset to default, `Some(hex)` = set it.
+pub fn update_list(db: &Db, id: i64, patch: &UpdateList) -> Result<Option<List>> {
     db.with(|conn| {
-        let n = conn.execute(
-            "UPDATE lists SET title = ?1 WHERE id = ?2",
-            rusqlite::params![title, id],
+        let current = match list_row(conn, id) {
+            Ok(l) => l,
+            Err(_) => return Ok(None),
+        };
+        let title = patch.title.clone().unwrap_or(current.title);
+        let color: Option<String> = match &patch.color {
+            Some(v) if v.is_empty() => None,
+            Some(v) => Some(v.clone()),
+            None => current.color,
+        };
+        conn.execute(
+            "UPDATE lists SET title = ?1, color = ?2 WHERE id = ?3",
+            rusqlite::params![title, color, id],
         )?;
-        if n == 0 {
-            Ok(None)
-        } else {
-            Ok(Some(list_row(conn, id)?))
-        }
+        Ok(Some(list_row(conn, id)?))
     })
 }
 

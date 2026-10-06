@@ -10,8 +10,8 @@ export interface List {
   id: number
   board_id: number
   title: string
+  color: string | null
   position: number
-  created_at: string
 }
 
 export interface Todo {
@@ -92,9 +92,10 @@ export const api = {
 
   // Colonnes kanban
   listLists: (boardId: number) => http<List[]>('GET', `/api/boards/${boardId}/lists`),
-  createList: (boardId: number, title: string) =>
-    http<List>('POST', `/api/boards/${boardId}/lists`, { title }),
-  renameList: (id: number, title: string) => http<List>('PUT', `/api/lists/${id}`, { title }),
+  createList: (boardId: number, title: string, color?: string | null) =>
+    http<List>('POST', `/api/boards/${boardId}/lists`, { title, ...(color ? { color } : {}) }),
+  updateList: (id: number, patch: { title?: string; color?: string }) =>
+    http<List>('PUT', `/api/lists/${id}`, patch),
   deleteList: (id: number) => http<void>('DELETE', `/api/lists/${id}`),
 
   // Todos

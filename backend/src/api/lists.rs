@@ -11,14 +11,8 @@ use axum::{
 };
 
 use crate::api::{ApiError, AppState};
-use crate::models::{CreateList, List};
+use crate::models::{CreateList, List, UpdateList};
 use crate::repo;
-
-/// Payload for renaming a column. `list_id` comes from the URL path.
-#[derive(serde::Deserialize)]
-pub struct RenameList {
-    pub title: String,
-}
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -26,7 +20,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/api/boards/:board_id/lists",
             post(create_list).get(list_lists),
         )
-        .route("/api/lists/:list_id", put(rename_list).delete(remove_list))
+        .route("/api/lists/:list_id", put(update_list).delete(remove_list))
 }
 
 async fn create_list(
@@ -49,12 +43,12 @@ async fn list_lists(
     Ok(Json(repo::list_lists(&state.db, board_id)?))
 }
 
-async fn rename_list(
+async fn update_list(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
-    Json(input): Json<RenameList>,
+    Json(input): Json<UpdateList>,
 ) -> Result<Json<List>, ApiError> {
-    match repo::rename_list(&state.db, id, &input.title)? {
+    match repo::update_list(&state.db, id, &input)? {
         Some(l) => Ok(Json(l)),
         None => Err(ApiError::not_found("list")),
     }
@@ -168,6 +162,52 @@ mod tests {
         // Gone from the list.
         let (_, lists) = req(app, "GET", &format!("/api/boards/{board_id}/lists"), None).await;
         assert_eq!(lists.as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_color_roundtrip() {
+        let app = app();
+        let (_, b) = req(app.clone(), "POST", "/api/boards", Some(r#"{"name":"K"}"#)).await;
+        let board_id: i64 = b["id"].as_i64().unwrap();
+
+        // Create with a color.
+        let (s, l1) = req(
+            app.clone(),
+            "POST",
+            &format!("/api/boards/{board_id}/lists"),
+            Some(r##"{"title":"Focus","color":"#e8b04a"}"##),
+        )
+        .await;
+        assert_eq!(s, StatusCode::CREATED);
+        let list_id: i64 = l1["id"].as_i64().unwrap();
+        assert_eq!(l1["color"], "#e8b04a");
+
+        // Update only the color (title untouched).
+        let (s, r) = req(
+            app.clone(),
+            "PUT",
+            &format!("/api/lists/{list_id}"),
+            Some(r##"{"color":"#5aa9e6"}"##),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(r["title"], "Focus");
+        assert_eq!(r["color"], "#5aa9e6");
+
+        // Clear the color back to default (empty string = reset).
+        let (s, r) = req(
+            app.clone(),
+            "PUT",
+            &format!("/api/lists/{list_id}"),
+            Some(r#"{"color":""}"#),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(r["color"].is_null());
+
+        // Reflected in the board's list.
+        let (_, lists) = req(app, "GET", &format!("/api/boards/{board_id}/lists"), None).await;
+        assert!(lists.as_array().unwrap()[0]["color"].is_null());
     }
 
     #[tokio::test]

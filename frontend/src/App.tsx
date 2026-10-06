@@ -36,6 +36,9 @@ function relTime(iso: string): string {
 
 const EMOJIS = ['👍', '❤️', '🎉', '👀', '✅']
 
+// Palette de couleurs pour les colonnes (sobre, accents discrets).
+const LIST_COLORS = ['#35c9dd', '#8b7bff', '#5ad19a', '#e8b45a', '#f06a6a', '#5aa9e8', '#d16ba5', '#9aa4b2']
+
 // ─── Toasts ──────────────────────────────────────────────────────────────────
 
 interface Toast { id: number; msg: string; kind: 'success' | 'error' }
@@ -126,8 +129,15 @@ export default function App() {
   const renameList = async (id: number, title: string) => {
     if (!title.trim()) return
     try {
-      await api.renameList(id, title.trim())
+      await api.updateList(id, { title: title.trim() })
       setLists(prev => prev.map(l => l.id === id ? { ...l, title: title.trim() } : l))
+    } catch (e) { notify((e as Error).message, 'error') }
+  }
+
+  const setListColor = async (id: number, color: string) => {
+    try {
+      await api.updateList(id, { color })
+      setLists(prev => prev.map(l => l.id === id ? { ...l, color: color || null } : l))
     } catch (e) { notify((e as Error).message, 'error') }
   }
 
@@ -223,6 +233,7 @@ export default function App() {
             todos={todos}
             onAddList={addList}
             onRenameList={renameList}
+            onSetListColor={setListColor}
             onDeleteList={deleteList}
             onAddTodo={addTodo}
             onDropCard={onDropCard}
@@ -339,6 +350,7 @@ function BoardHeader({ board, onImport, onNewBoard }: { board: Board | null; onI
 function BoardCanvas(props: {
   lists: List[]; todos: Todo[]
   onAddList: (title: string) => void; onRenameList: (id: number, title: string) => void
+  onSetListColor: (id: number, color: string) => void
   onDeleteList: (id: number) => void; onAddTodo: (listId: number | null, title: string) => void
   onDropCard: (cardId: number, listId: number | null) => void; onOpenTodo: (id: number) => void
 }) {
@@ -350,7 +362,9 @@ function BoardCanvas(props: {
       {props.lists.map((l, i) => (
         <Column key={l.id} list={l} todos={props.todos.filter(t => t.list_id === l.id)}
           style={{ animationDelay: `${Math.min(i, 10) * 60}ms` }}
-          onRename={(t) => props.onRenameList(l.id, t)} onDelete={() => props.onDeleteList(l.id)}
+          onRename={(t) => props.onRenameList(l.id, t)}
+          onSetColor={(c) => props.onSetListColor(l.id, c)}
+          onDelete={() => props.onDeleteList(l.id)}
           onAddTodo={(title) => props.onAddTodo(l.id, title)}
           onDropCard={props.onDropCard} onOpenTodo={props.onOpenTodo} />
       ))}
@@ -410,7 +424,7 @@ function UnassignedZone(props: {
 
 function Column(props: {
   list: List; todos: Todo[]; style?: CSSProperties
-  onRename: (title: string) => void; onDelete: () => void
+  onRename: (title: string) => void; onSetColor: (color: string) => void; onDelete: () => void
   onAddTodo: (title: string) => void; onDropCard: (cardId: number, listId: number | null) => void
   onOpenTodo: (id: number) => void
 }) {
@@ -419,9 +433,12 @@ function Column(props: {
   const [addingCard, setAddingCard] = useState(false)
   const [cardDraft, setCardDraft] = useState('')
   const [dragOver, setDragOver] = useState(false)
+  const [showColors, setShowColors] = useState(false)
+
+  const accent = props.list.color ?? 'transparent'
 
   return (
-    <div className="column" style={props.style}>
+    <div className="column" style={{ ...props.style, ['--list-accent' as string]: accent }}>
       <div className="column-head">
         {editingTitle ? (
           <input
@@ -431,11 +448,39 @@ function Column(props: {
             onBlur={() => { props.onRename(titleDraft); setEditingTitle(false) }}
           />
         ) : (
-          <span className="title" onDoubleClick={() => setEditingTitle(true)}>{props.list.title}</span>
+          <span className="title" onDoubleClick={() => setEditingTitle(true)} title="Double-cliquer pour renommer">{props.list.title}</span>
         )}
         <span className="count">{props.todos.length}</span>
+        <button
+          className={`icon-btn color-btn ${showColors ? 'open' : ''}`}
+          style={{ width: 24, height: 24 }}
+          title="Changer la couleur"
+          onClick={() => setShowColors(v => !v)}
+        >◐</button>
         <button className="icon-btn" style={{ width: 24, height: 24 }} title="Supprimer la colonne" onClick={props.onDelete}>✕</button>
       </div>
+
+      {showColors && (
+        <>
+          <div className="color-popback" onClick={() => setShowColors(false)} />
+          <div className="color-pop">
+            {LIST_COLORS.map(c => (
+              <button
+                key={c}
+                className={`swatch ${props.list.color === c ? 'active' : ''}`}
+                style={{ background: c }}
+                title={c}
+                onClick={() => { props.onSetColor(c); setShowColors(false) }}
+              />
+            ))}
+            <button
+              className="swatch reset"
+              title="Couleur par défaut"
+              onClick={() => { props.onSetColor(''); setShowColors(false) }}
+            >∅</button>
+          </div>
+        </>
+      )}
 
       <div
         className={`column-body ${dragOver ? 'drop-target' : ''}`}

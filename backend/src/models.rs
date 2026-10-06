@@ -16,6 +16,9 @@ pub struct List {
     pub id: i64,
     pub board_id: i64,
     pub title: String,
+    /// Custom accent color for the column (`None` = default).
+    #[serde(default)]
+    pub color: Option<String>,
     pub position: i64,
 }
 
@@ -25,6 +28,17 @@ pub struct CreateList {
     #[serde(default)]
     pub board_id: i64,
     pub title: String,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+/// Partial update payload for a list (all fields optional).
+#[derive(Debug, Default, Deserialize)]
+pub struct UpdateList {
+    pub title: Option<String>,
+    /// Tri-state: field absent = unchanged, `Some("")` = reset to default,
+    /// `Some("#hex")` = set the color. (A bare `null` is treated as "absent".)
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
