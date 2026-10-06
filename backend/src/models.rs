@@ -55,6 +55,9 @@ pub struct Todo {
     pub due_date: Option<String>,
     pub done: bool,
     pub position: i64,
+    /// Tags attached to this card (populated by the repository).
+    #[serde(default)]
+    pub tags: Vec<Tag>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -88,6 +91,26 @@ pub struct UpdateTodo {
     pub position: Option<i64>,
     /// Move the card to a different kanban column (`Some(None)` clears it).
     pub list_id: Option<Option<i64>>,
+}
+
+/// A personal colored tag scoped to a board, attachable to cards.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tag {
+    pub id: i64,
+    pub board_id: i64,
+    pub name: String,
+    pub color: String,
+}
+
+/// Payload for creating a tag on a board. `board_id` is injected from the URL path.
+#[derive(Debug, Deserialize)]
+pub struct CreateTag {
+    #[serde(default)]
+    pub board_id: i64,
+    pub name: String,
+    /// Hex color (e.g. `#35c9dd`). Defaults to the accent when omitted.
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 /// Parse a stored `datetime('now')` UTC string into a `DateTime<Utc>`.

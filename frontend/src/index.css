@@ -283,6 +283,46 @@ textarea { resize: vertical; min-height: 70px; }
 .badge.due.overdue { color: var(--danger); background: rgba(240,106,106,0.1); }
 .badge.comments { color: var(--text-2); }
 
+/* Tags — pills sobres teintées par la couleur du tag */
+.card-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.tag-pill {
+  --tag-color: var(--accent);
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 600; line-height: 1;
+  padding: 3px 8px; border-radius: 20px;
+  color: var(--tag-color);
+  background: color-mix(in srgb, var(--tag-color) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag-color) 34%, transparent);
+}
+.tag-pill.on { background: color-mix(in srgb, var(--tag-color) 22%, transparent); }
+.tag-pill .tag-x {
+  all: unset; cursor: pointer; font-size: 9px; line-height: 1;
+  opacity: 0.65; padding: 0 1px; border-radius: 3px;
+}
+.tag-pill .tag-x:hover { opacity: 1; }
+
+/* Éditeur de tags dans le panneau détail */
+.tag-editor, .tag-picker { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+.tag-pill.pick { cursor: default; }
+.tag-pill.pick button {
+  all: unset; cursor: pointer; font-size: 10.5px; font-weight: 600; line-height: 1;
+}
+.tag-pill.pick:not(.on) { opacity: 0.55; }
+.tag-pill.pick:hover { opacity: 1; }
+.tag-create { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tag-create input {
+  flex: 1; min-width: 130px; padding: 7px 10px; font-size: 12.5px;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 7px; color: var(--text-0);
+}
+.tag-create input:focus { outline: none; border-color: var(--accent-border); }
+.tag-colors { display: flex; gap: 5px; }
+.tag-colors .swatch {
+  width: 18px; height: 18px; border-radius: 6px; cursor: pointer; padding: 0;
+  border: 2px solid transparent; transition: transform 0.12s var(--ease-out), border-color 0.12s;
+}
+.tag-colors .swatch:hover { transform: scale(1.14); }
+.tag-colors .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+
 .add-card-row { padding: 0 10px 12px; }
 .add-card-btn {
   width: 100%; text-align: left; padding: 8px 10px;

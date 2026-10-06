@@ -14,6 +14,7 @@ pub mod boards;
 pub mod comments;
 pub mod documents;
 pub mod lists;
+pub mod tags;
 
 /// Shared, immutable application state handed to every handler.
 #[derive(Clone)]
@@ -56,6 +57,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(comments::routes())
         .merge(documents::routes())
         .merge(lists::routes())
+        .merge(tags::routes())
 }
 
 async fn health(State(_state): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -78,6 +80,13 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: format!("{what} not found"),
+        }
+    }
+
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: msg.into(),
         }
     }
 

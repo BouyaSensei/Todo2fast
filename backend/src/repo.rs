@@ -2,7 +2,8 @@
 
 use crate::db::{Db, DbError};
 use crate::models::{
-    parse_ts, Board, CreateBoard, CreateList, CreateTodo, List, Todo, UpdateList, UpdateTodo,
+    parse_ts, Board, CreateBoard, CreateList, CreateTag, CreateTodo, List, Tag, Todo, UpdateList,
+    UpdateTodo,
 };
 
 pub type Result<T> = std::result::Result<T, DbError>;
@@ -151,6 +152,25 @@ pub fn delete_list(db: &Db, id: i64) -> Result<bool> {
 
 // ---------- Todos ----------
 
+/// Tags attached to a todo (empty vec when none).
+fn tags_for(conn: &mut rusqlite::Connection, todo_id: i64) -> Result<Vec<Tag>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.board_id, t.name, t.color FROM tags t
+         JOIN todo_tags tt ON tt.tag_id = t.id
+         WHERE tt.todo_id = ?1 ORDER BY t.name",
+    )?;
+    let rows = stmt.query_map([todo_id], |r| {
+        Ok(Tag {
+            id: r.get(0)?,
+            board_id: r.get(1)?,
+            name: r.get(2)?,
+            color: r.get(3)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<_, _>>()
+        .map_err(Into::into)
+}
+
 fn todo_row(conn: &mut rusqlite::Connection, id: i64) -> Result<Todo> {
     let (board_id, list_id, title, description, due_date, done, position, created_at, updated_at): (
         i64,
@@ -180,6 +200,7 @@ fn todo_row(conn: &mut rusqlite::Connection, id: i64) -> Result<Todo> {
             ))
         },
     )?;
+    let tags = tags_for(conn, id)?;
     Ok(Todo {
         id,
         board_id,
@@ -189,6 +210,7 @@ fn todo_row(conn: &mut rusqlite::Connection, id: i64) -> Result<Todo> {
         due_date,
         done: done != 0,
         position,
+        tags,
         created_at: parse_ts(&created_at),
         updated_at: parse_ts(&updated_at),
     })
@@ -409,4 +431,82 @@ pub fn remove_reaction(db: &Db, comment_id: i64, author: &str, emoji: &str) -> R
             rusqlite::params![comment_id, author, emoji],
         )? > 0)
     })
+}
+
+// ---------- Tags ----------
+
+fn tag_row(conn: &mut rusqlite::Connection, id: i64) -> Result<Tag> {
+    let (board_id, name, color): (i64, String, String) = conn.query_row(
+        "SELECT board_id, name, color FROM tags WHERE id = ?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    Ok(Tag {
+        id,
+        board_id,
+        name,
+        color,
+    })
+}
+
+/// Create a tag on a board. A missing/empty color falls back to the accent.
+pub fn create_tag(db: &Db, board_id: i64, input: &CreateTag) -> Result<Tag> {
+    db.with(|conn| {
+        let color = input
+            .color
+            .clone()
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| "#35c9dd".into());
+        conn.execute(
+            "INSERT INTO tags (board_id, name, color) VALUES (?1, ?2, ?3)",
+            rusqlite::params![board_id, input.name, color],
+        )?;
+        tag_row(conn, conn.last_insert_rowid())
+    })
+}
+
+pub fn list_tags(db: &Db, board_id: i64) -> Result<Vec<Tag>> {
+    db.with(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, board_id, name, color FROM tags WHERE board_id = ?1 ORDER BY name",
+        )?;
+        let rows = stmt.query_map([board_id], |r| {
+            Ok(Tag {
+                id: r.get(0)?,
+                board_id: r.get(1)?,
+                name: r.get(2)?,
+                color: r.get(3)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<_, _>>()
+            .map_err(Into::into)
+    })
+}
+
+pub fn delete_tag(db: &Db, id: i64) -> Result<bool> {
+    db.with(|conn| Ok(conn.execute("DELETE FROM tags WHERE id = ?1", [id])? > 0))
+}
+
+/// Attach a tag to a todo (idempotent). Returns the refreshed todo.
+pub fn add_tag_to_todo(db: &Db, todo_id: i64, tag_id: i64) -> Result<Option<Todo>> {
+    db.with(|conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO todo_tags (todo_id, tag_id) VALUES (?1, ?2)",
+            rusqlite::params![todo_id, tag_id],
+        )?;
+        Ok(())
+    })?;
+    get_todo(db, todo_id)
+}
+
+/// Detach a tag from a todo. Returns the refreshed todo.
+pub fn remove_tag_from_todo(db: &Db, todo_id: i64, tag_id: i64) -> Result<Option<Todo>> {
+    db.with(|conn| {
+        conn.execute(
+            "DELETE FROM todo_tags WHERE todo_id = ?1 AND tag_id = ?2",
+            rusqlite::params![todo_id, tag_id],
+        )?;
+        Ok(())
+    })?;
+    get_todo(db, todo_id)
 }

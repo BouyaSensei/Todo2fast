@@ -14,6 +14,13 @@ export interface List {
   position: number
 }
 
+export interface Tag {
+  id: number
+  board_id: number
+  name: string
+  color: string
+}
+
 export interface Todo {
   id: number
   board_id: number
@@ -23,6 +30,7 @@ export interface Todo {
   done: boolean
   due_date: string | null
   position: number
+  tags: Tag[]
   created_at: string
   updated_at: string
 }
@@ -117,6 +125,16 @@ export const api = {
     patch: Partial<Pick<Todo, 'title' | 'description' | 'done' | 'due_date' | 'list_id'>>,
   ) => http<Todo>('PUT', `/api/todos/${id}`, patch),
   deleteTodo: (id: number) => http<void>('DELETE', `/api/todos/${id}`),
+
+  // Tags personnels colorés
+  listTags: (boardId: number) => http<Tag[]>('GET', `/api/boards/${boardId}/tags`),
+  createTag: (boardId: number, name: string, color?: string | null) =>
+    http<Tag>('POST', `/api/boards/${boardId}/tags`, { name, ...(color ? { color } : {}) }),
+  deleteTag: (id: number) => http<void>('DELETE', `/api/tags/${id}`),
+  addTagToTodo: (todoId: number, tagId: number) =>
+    http<Todo>('POST', `/api/todos/${todoId}/tags`, { tag_id: tagId }),
+  removeTagFromTodo: (todoId: number, tagId: number) =>
+    http<Todo>('DELETE', `/api/todos/${todoId}/tags`, { tag_id: tagId }),
 
   // Commentaires
   listComments: (todoId: number) => http<Comment[]>('GET', `/api/todos/${todoId}/comments`),

@@ -86,6 +86,22 @@ impl Db {
                 UNIQUE (comment_id, author, emoji)
             );
             CREATE INDEX IF NOT EXISTS idx_reactions_comment ON reactions(comment_id);
+
+            CREATE TABLE IF NOT EXISTS tags (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                name        TEXT NOT NULL,
+                color       TEXT NOT NULL DEFAULT '#35c9dd',
+                UNIQUE (board_id, name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tags_board ON tags(board_id);
+
+            CREATE TABLE IF NOT EXISTS todo_tags (
+                todo_id     INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+                tag_id      INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                UNIQUE (todo_id, tag_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_todo_tags_todo ON todo_tags(todo_id);
             "#,
         )?;
         // Idempotent upgrade for databases created before the kanban lists existed.

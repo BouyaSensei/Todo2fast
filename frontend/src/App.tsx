@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { api, type Board, type Comment, type DocumentAnalysis, type List, type Todo } from './api'
+import { api, type Board, type Comment, type DocumentAnalysis, type List, type Tag, type Todo } from './api'
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 
@@ -38,6 +38,8 @@ const EMOJIS = ['👍', '❤️', '🎉', '👀', '✅']
 
 // Palette de couleurs pour les colonnes (sobre, accents discrets).
 const LIST_COLORS = ['#35c9dd', '#8b7bff', '#5ad19a', '#e8b45a', '#f06a6a', '#5aa9e8', '#d16ba5', '#9aa4b2']
+// Palette de couleurs pour les tags (identique, cohérence visuelle).
+const TAG_COLORS = LIST_COLORS
 
 // ─── Toasts ──────────────────────────────────────────────────────────────────
 
@@ -51,6 +53,7 @@ export default function App() {
 
   const [lists, setLists] = useState<List[]>([])
   const [todos, setTodos] = useState<Todo[]>([])
+  const [tags, setTags] = useState<Tag[]>([])
   const [loadingBoard, setLoadingBoard] = useState(false)
 
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -81,9 +84,14 @@ export default function App() {
   const loadBoard = useCallback(async (boardId: number) => {
     setLoadingBoard(true)
     try {
-      const [ls, ts] = await Promise.all([api.listLists(boardId), api.listTodos(boardId)])
+      const [ls, ts, tg] = await Promise.all([
+        api.listLists(boardId),
+        api.listTodos(boardId),
+        api.listTags(boardId),
+      ])
       setLists(ls.sort((a, b) => a.position - b.position))
       setTodos(ts.sort((a, b) => a.position - b.position))
+      setTags(tg)
     } catch (e) {
       notify(`Erreur board: ${(e as Error).message}`, 'error')
     } finally {
@@ -93,7 +101,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeBoardId != null) loadBoard(activeBoardId)
-    else { setLists([]); setTodos([]) }
+    else { setLists([]); setTodos([]); setTags([]) }
   }, [activeBoardId, loadBoard])
 
   // ─── Actions boards ───────────────────────────────────────────────────────
@@ -177,6 +185,37 @@ export default function App() {
     } catch (e) { notify((e as Error).message, 'error') }
   }
 
+  // ─── Actions tags ─────────────────────────────────────────────────────────
+  const addTag = async (name: string, color: string) => {
+    if (!activeBoardId || !name.trim()) return
+    try {
+      const t = await api.createTag(activeBoardId, name.trim(), color)
+      setTags(prev => [...prev, t].sort((a, b) => a.name.localeCompare(b.name)))
+      notify('Tag créé')
+    } catch (e) { notify((e as Error).message, 'error') }
+  }
+
+  const deleteTag = async (id: number) => {
+    try {
+      await api.deleteTag(id)
+      setTags(prev => prev.filter(t => t.id !== id))
+      setTodos(prev => prev.map(t => ({ ...t, tags: (t.tags ?? []).filter(x => x.id !== id) })))
+      notify('Tag supprimé')
+    } catch (e) { notify((e as Error).message, 'error') }
+  }
+
+  const toggleTagOnTodo = async (todoId: number, tagId: number) => {
+    const todo = todos.find(t => t.id === todoId)
+    if (!todo) return
+    const has = (todo.tags ?? []).some(x => x.id === tagId)
+    try {
+      const updated = has
+        ? await api.removeTagFromTodo(todoId, tagId)
+        : await api.addTagToTodo(todoId, tagId)
+      setTodos(prev => prev.map(t => t.id === todoId ? updated : t))
+    } catch (e) { notify((e as Error).message, 'error') }
+  }
+
   // Drag & drop de cartes entre colonnes
   const onDropCard = async (cardId: number, targetListId: number | null) => {
     const card = todos.find(t => t.id === cardId)
@@ -231,6 +270,7 @@ export default function App() {
           <BoardCanvas
             lists={lists}
             todos={todos}
+            tags={tags}
             onAddList={addList}
             onRenameList={renameList}
             onSetListColor={setListColor}
@@ -246,10 +286,14 @@ export default function App() {
         <TodoDetailPanel
           todo={detailTodo}
           lists={lists}
+          tags={tags}
           user={user}
           onClose={() => setDetailTodoId(null)}
           onPatch={patchTodo}
           onDelete={() => deleteTodo(detailTodo.id)}
+          onToggleTag={toggleTagOnTodo}
+          onAddTag={addTag}
+          onDeleteTag={deleteTag}
           notify={notify}
         />
       )}
@@ -348,7 +392,7 @@ function BoardHeader({ board, onImport, onNewBoard }: { board: Board | null; onI
 // ─── Canvas kanban ───────────────────────────────────────────────────────────
 
 function BoardCanvas(props: {
-  lists: List[]; todos: Todo[]
+  lists: List[]; todos: Todo[]; tags: Tag[]
   onAddList: (title: string) => void; onRenameList: (id: number, title: string) => void
   onSetListColor: (id: number, color: string) => void
   onDeleteList: (id: number) => void; onAddTodo: (listId: number | null, title: string) => void
@@ -530,6 +574,13 @@ function Card({ todo, onOpen, index = 0 }: { todo: Todo; onOpen: () => void; ind
       onClick={onOpen}
     >
       <div className="card-title">{todo.title}</div>
+      {(todo.tags ?? []).length > 0 && (
+        <div className="card-tags">
+          {todo.tags.map(tg => (
+            <span key={tg.id} className="tag-pill" style={{ ['--tag-color' as string]: tg.color }}>{tg.name}</span>
+          ))}
+        </div>
+      )}
       <div className="card-meta">
         {todo.due_date && (
           <span className={`badge due ${isOverdue(todo) ? 'overdue' : ''}`}>📅 {fmtDate(todo.due_date)}</span>
@@ -543,9 +594,13 @@ function Card({ todo, onOpen, index = 0 }: { todo: Todo; onOpen: () => void; ind
 // ─── Panneau détail d'une tâche ──────────────────────────────────────────────
 
 function TodoDetailPanel(props: {
-  todo: Todo; lists: List[]; user: string
+  todo: Todo; lists: List[]; tags: Tag[]; user: string
   onClose: () => void; onPatch: (id: number, p: Partial<Todo>) => Promise<Todo | null>
-  onDelete: () => void; notify: (m: string, k?: 'success' | 'error') => void
+  onDelete: () => void
+  onToggleTag: (todoId: number, tagId: number) => void
+  onAddTag: (name: string, color: string) => void
+  onDeleteTag: (id: number) => void
+  notify: (m: string, k?: 'success' | 'error') => void
 }) {
   const [title, setTitle] = useState(props.todo.title)
   const [desc, setDesc] = useState(props.todo.description)
@@ -554,6 +609,8 @@ function TodoDetailPanel(props: {
   const [comments, setComments] = useState<Comment[]>([])
   const [commentDraft, setCommentDraft] = useState('')
   const [showEmoji, setShowEmoji] = useState<number | null>(null)
+  const [newTagName, setNewTagName] = useState('')
+  const [newTagColor, setNewTagColor] = useState('#35c9dd')
 
   useEffect(() => {
     api.listComments(props.todo.id).then(setComments).catch(() => {})
@@ -614,6 +671,49 @@ function TodoDetailPanel(props: {
               <label>Date d'échéance</label>
               <input type="date" value={due} onChange={(e) => setDue(e.target.value)}
                 onBlur={() => saveField({ due_date: due || null })} />
+            </div>
+          </div>
+
+          <div>
+            <div className="section-label">Tags</div>
+            <div className="tag-editor">
+              {(props.todo.tags ?? []).map(tg => (
+                <span key={tg.id} className="tag-pill on" style={{ ['--tag-color' as string]: tg.color }}>
+                  {tg.name}
+                  <button className="tag-x" title="Retirer du tag" onClick={() => props.onToggleTag(props.todo.id, tg.id)}>✕</button>
+                </span>
+              ))}
+              {(props.todo.tags ?? []).length === 0 && (
+                <span className="c-time">Aucun tag sur cette carte.</span>
+              )}
+            </div>
+
+            {props.tags.length > 0 && (
+              <div className="tag-picker">
+                {props.tags.map(tg => {
+                  const on = (props.todo.tags ?? []).some(x => x.id === tg.id)
+                  return (
+                    <span key={tg.id} className={`tag-pill pick ${on ? 'on' : ''}`} style={{ ['--tag-color' as string]: tg.color }}>
+                      <button onClick={() => props.onToggleTag(props.todo.id, tg.id)}>{tg.name}</button>
+                      <button className="tag-x" title="Supprimer ce tag" onClick={(e) => { e.stopPropagation(); props.onDeleteTag(tg.id) }}>✕</button>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+
+            <div className="tag-create">
+              <input
+                value={newTagName} onChange={(e) => setNewTagName(e.target.value)}
+                placeholder="Nouveau tag…"
+                onKeyDown={(e) => { if (e.key === 'Enter' && newTagName.trim()) { props.onAddTag(newTagName, newTagColor); setNewTagName('') } }}
+              />
+              <div className="tag-colors">
+                {TAG_COLORS.map(c => (
+                  <button key={c} className={`swatch ${newTagColor === c ? 'active' : ''}`} style={{ background: c }} title={c} onClick={() => setNewTagColor(c)} />
+                ))}
+              </div>
+              <button className="btn btn-ghost btn-sm" disabled={!newTagName.trim()} onClick={() => { props.onAddTag(newTagName, newTagColor); setNewTagName('') }}>Créer</button>
             </div>
           </div>
 
