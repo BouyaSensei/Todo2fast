@@ -22,7 +22,7 @@ pub fn routes() -> Router<Arc<AppState>> {
 
 /// List the providers the server knows about and whether each is usable.
 async fn list_providers(State(_state): State<Arc<AppState>>) -> Json<Vec<ai::ProviderInfo>> {
-    Json(ai::list_providers())
+    Json(ai::list_providers().await)
 }
 
 /// Fetch the model catalog for one provider. A not-configured or unreachable
@@ -50,7 +50,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn providers_endpoint_lists_openai() {
+    async fn providers_endpoint_lists_ollama() {
         let req = axum::http::Request::builder()
             .uri("/api/ai/providers")
             .body(axum::body::Body::empty())
@@ -59,24 +59,14 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(v.as_array().unwrap().iter().any(|p| p["id"] == "openai"));
-    }
-
-    #[tokio::test]
-    async fn models_endpoint_errors_when_not_configured() {
-        // No API key in the test env → the provider is unavailable → 400.
-        let req = axum::http::Request::builder()
-            .uri("/api/ai/providers/openai/models")
-            .body(axum::body::Body::empty())
-            .unwrap();
-        let resp = app().oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        // Ollama is always listed, whatever its runtime state.
+        assert!(v.as_array().unwrap().iter().any(|p| p["id"] == "ollama"));
     }
 
     #[tokio::test]
     async fn models_endpoint_unknown_provider_is_400() {
         let req = axum::http::Request::builder()
-            .uri("/api/ai/providers/nope/models")
+            .uri("/api/ai/providers/nonexistent/models")
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app().oneshot(req).await.unwrap();

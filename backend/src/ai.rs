@@ -1,10 +1,13 @@
-//! Optional AI provider for PDF understanding.
+//! Optional AI providers for PDF understanding.
 //!
 //! The deterministic extractor (`crate::pdf_extract`) remains the default and
-//! the guaranteed fallback. When an OpenAI-compatible provider is configured
-//! via environment variables, the UI can list its models and ask it to refine
-//! the suggested tasks. No API key or credential is ever returned to the
-//! client — only provider names and model identifiers.
+//! the guaranteed fallback. Providers are detected dynamically:
+//!
+//! - **Ollama** (local, no API key) — probed on every `list_providers` call.
+//! - **OpenAI-compatible** (remote, requires an API key via env).
+//!
+//! No API key or credential is ever returned to the client — only provider
+//! names, availability flags and model identifiers cross the wire.
 
 use std::time::Duration;
 
@@ -42,31 +45,57 @@ struct ProviderConfig {
     default_model: String,
 }
 
-/// Read the AI configuration from the environment. Never panics; a missing
-/// key simply marks the provider as unavailable (deterministic fallback).
+/// Build the list of known providers from the environment.
+///
+/// Ollama is always listed (probed at runtime); OpenAI-compatible is listed
+/// only when a key is present in the environment.
 fn configured_providers() -> Vec<ProviderConfig> {
+    let mut providers = Vec::new();
+
+    // ── Ollama (local, no key) ──────────────────────────────────────────────
+    let ollama_base = std::env::var("T2F_OLLAMA_BASE_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+    let ollama_model = std::env::var("T2F_OLLAMA_MODEL")
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| "llama3.2".to_string());
+
+    providers.push(ProviderConfig {
+        id: "ollama".into(),
+        label: "Ollama (local)".into(),
+        base_url: ollama_base,
+        api_key: None,
+        default_model: ollama_model,
+    });
+
+    // ── OpenAI-compatible (remote, key required) ────────────────────────────
     let openai_key = std::env::var("T2F_OPENAI_API_KEY")
         .ok()
         .or_else(|| std::env::var("OPENAI_API_KEY").ok())
         .filter(|k| !k.trim().is_empty());
 
-    let base_url = std::env::var("T2F_OPENAI_BASE_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty())
-        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+    if let Some(key) = openai_key {
+        let base_url = std::env::var("T2F_OPENAI_BASE_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        let default_model = std::env::var("T2F_AI_MODEL")
+            .ok()
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| "gpt-4o-mini".to_string());
 
-    let default_model = std::env::var("T2F_AI_MODEL")
-        .ok()
-        .filter(|m| !m.trim().is_empty())
-        .unwrap_or_else(|| "gpt-4o-mini".to_string());
+        providers.push(ProviderConfig {
+            id: "openai".into(),
+            label: "OpenAI (compatible)".into(),
+            base_url,
+            api_key: Some(key),
+            default_model,
+        });
+    }
 
-    vec![ProviderConfig {
-        id: "openai".into(),
-        label: "OpenAI (compatible)".into(),
-        base_url,
-        api_key: openai_key,
-        default_model,
-    }]
+    providers
 }
 
 /// Build an HTTP client with a bounded timeout so a hung provider can never
@@ -78,34 +107,56 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("client HTTP: {e}"))
 }
 
+/// Probe a keyless provider by hitting its `/models` endpoint.
+/// Returns `true` when the server responds successfully.
+async fn probe_available(p: &ProviderConfig) -> bool {
+    let client = match http_client() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let url = format!("{}/models", p.base_url.trim_end_matches('/'));
+    match client.get(&url).send().await {
+        Ok(r) => r.status().is_success(),
+        Err(_) => false,
+    }
+}
+
 /// List the providers known to the server and whether each is usable.
-pub fn list_providers() -> Vec<ProviderInfo> {
-    configured_providers()
-        .into_iter()
-        .map(|p| ProviderInfo {
-            id: p.id,
-            label: p.label,
-            available: p.api_key.is_some(),
-            default_model: p.default_model,
-        })
-        .collect()
+/// Keyless providers (Ollama) are probed live; keyed providers are available
+/// as soon as their env key is set.
+pub async fn list_providers() -> Vec<ProviderInfo> {
+    let configs = configured_providers();
+    let mut infos = Vec::with_capacity(configs.len());
+    for p in &configs {
+        let available = if p.api_key.is_some() {
+            true
+        } else {
+            probe_available(p).await
+        };
+        infos.push(ProviderInfo {
+            id: p.id.clone(),
+            label: p.label.clone(),
+            available,
+            default_model: p.default_model.clone(),
+        });
+    }
+    infos
 }
 
 /// Fetch the model catalog for a provider. Returns an error string when the
-/// provider is not configured or unreachable (the client then falls back to
+/// provider is unknown or unreachable (the client then falls back to
 /// deterministic mode).
 pub async fn list_models(provider_id: &str) -> Result<Vec<ModelInfo>, String> {
     let p = find_provider(provider_id)?;
-    let key = p
-        .api_key
-        .as_ref()
-        .ok_or_else(|| "provider non configuré (clé API absente)".to_string())?;
-
     let client = http_client()?;
     let url = format!("{}/models", p.base_url.trim_end_matches('/'));
-    let resp = client
-        .get(&url)
-        .bearer_auth(key)
+
+    let mut req = client.get(&url);
+    if let Some(key) = &p.api_key {
+        req = req.bearer_auth(key);
+    }
+
+    let resp = req
         .send()
         .await
         .map_err(|e| format!("requête modèles: {e}"))?;
@@ -142,10 +193,6 @@ pub async fn refine_tasks(
     candidates: &[ExtractedTask],
 ) -> Result<Vec<ExtractedTask>, String> {
     let p = find_provider(provider_id)?;
-    let key = p
-        .api_key
-        .as_ref()
-        .ok_or_else(|| "provider non configuré (clé API absente)".to_string())?;
     let model = if model.trim().is_empty() {
         p.default_model.clone()
     } else {
@@ -175,13 +222,12 @@ pub async fn refine_tasks(
         ]
     });
 
-    let resp = client
-        .post(&url)
-        .bearer_auth(key)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("requête IA: {e}"))?;
+    let mut req = client.post(&url).json(&payload);
+    if let Some(key) = &p.api_key {
+        req = req.bearer_auth(key);
+    }
+
+    let resp = req.send().await.map_err(|e| format!("requête IA: {e}"))?;
 
     if !resp.status().is_success() {
         return Err(format!("provider a répondu {}", resp.status()));
@@ -250,14 +296,22 @@ fn parse_tasks_from_llm(raw: &str) -> Result<Vec<ExtractedTask>, String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn lists_openai_provider_as_unavailable_without_key() {
-        // In the test environment no key is set, so the provider must report
-        // itself as unavailable (deterministic fallback path).
-        let providers = list_providers();
-        assert!(providers.iter().any(|p| p.id == "openai"));
-        let openai = providers.iter().find(|p| p.id == "openai").unwrap();
-        assert!(!openai.available);
+    #[tokio::test]
+    async fn lists_ollama_provider() {
+        // Ollama is always listed, regardless of whether it is running.
+        let providers = list_providers().await;
+        assert!(providers.iter().any(|p| p.id == "ollama"));
+        let ollama = providers.iter().find(|p| p.id == "ollama").unwrap();
+        // Label and default model must be set.
+        assert!(!ollama.label.is_empty());
+        assert!(!ollama.default_model.is_empty());
+    }
+
+    #[tokio::test]
+    async fn openai_absent_without_key() {
+        // Without T2F_OPENAI_API_KEY / OPENAI_API_KEY, OpenAI must not appear.
+        let providers = list_providers().await;
+        assert!(!providers.iter().any(|p| p.id == "openai"));
     }
 
     #[test]
