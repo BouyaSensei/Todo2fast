@@ -119,7 +119,10 @@ pub async fn list_models(provider_id: &str) -> Result<Vec<ModelInfo>, String> {
     struct ModelsResp {
         data: Vec<ModelInfo>,
     }
-    let body: ModelsResp = resp.json().await.map_err(|e| format!("JSON modèles: {e}"))?;
+    let body: ModelsResp = resp
+        .json()
+        .await
+        .map_err(|e| format!("JSON modèles: {e}"))?;
     Ok(body.data)
 }
 
@@ -197,7 +200,10 @@ pub async fn refine_tasks(
         content: String,
     }
 
-    let chat: ChatResp = resp.json().await.map_err(|e| format!("JSON réponse IA: {e}"))?;
+    let chat: ChatResp = resp
+        .json()
+        .await
+        .map_err(|e| format!("JSON réponse IA: {e}"))?;
     let raw = chat
         .choices
         .first()

@@ -56,14 +56,21 @@ async fn upload_document(
     // Optional AI refinement with a guaranteed deterministic fallback.
     let mut refined = false;
     if !ai_provider.trim().is_empty() {
-        match crate::ai::refine_tasks(&ai_provider, &ai_model, &analysis.preview, &analysis.suggested_tasks)
-            .await
+        match crate::ai::refine_tasks(
+            &ai_provider,
+            &ai_model,
+            &analysis.preview,
+            &analysis.suggested_tasks,
+        )
+        .await
         {
             Ok(tasks) => {
                 analysis.suggested_tasks = tasks;
                 refined = true;
             }
-            Err(e) => tracing::warn!(provider = %ai_provider, error = %e, "raffinement IA indisponible — fallback déterministe"),
+            Err(e) => {
+                tracing::warn!(provider = %ai_provider, error = %e, "raffinement IA indisponible — fallback déterministe")
+            }
         }
     }
 
@@ -72,9 +79,7 @@ async fn upload_document(
 
 /// Read the PDF bytes plus the optional AI form fields from a multipart body
 /// in a single pass (a multipart stream can only be consumed once).
-async fn read_upload(
-    multipart: &mut Multipart,
-) -> Result<(Vec<u8>, String, String), ApiError> {
+async fn read_upload(multipart: &mut Multipart) -> Result<(Vec<u8>, String, String), ApiError> {
     let mut data: Option<Vec<u8>> = None;
     let mut provider = String::new();
     let mut model = String::new();

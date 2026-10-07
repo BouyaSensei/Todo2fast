@@ -31,7 +31,9 @@ async fn list_models(
     State(_state): State<Arc<AppState>>,
     Path(provider): Path<String>,
 ) -> Result<Json<Vec<ai::ModelInfo>>, ApiError> {
-    let models = ai::list_models(&provider).await.map_err(ApiError::bad_request)?;
+    let models = ai::list_models(&provider)
+        .await
+        .map_err(ApiError::bad_request)?;
     Ok(Json(models))
 }
 
