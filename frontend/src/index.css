@@ -481,6 +481,20 @@ textarea { resize: vertical; min-height: 70px; }
 .dropzone:hover, .dropzone.drag { border-color: var(--accent-border); background: var(--accent-dim); color: var(--text-1); }
 .dropzone .dz-icon { font-size: 26px; margin-bottom: 8px; }
 
+/* Raffinement IA (optionnel) */
+.ai-section { margin-bottom: 14px; }
+.ai-controls { display: flex; gap: 8px; margin-top: 8px; }
+.ai-select {
+  flex: 1; min-width: 0; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg-2);
+  color: var(--text-1); font-size: 13px; cursor: pointer; transition: border-color .15s;
+}
+.ai-select:focus { outline: none; border-color: var(--accent); }
+.badge.ai-refined {
+  margin-left: auto; background: rgba(34,211,238,.14); color: var(--accent);
+  border: 1px solid rgba(34,211,238,.35); padding: 3px 9px;
+}
+
 .analysis-summary { display: flex; gap: 10px; flex-wrap: wrap; }
 .stat-chip {
   background: var(--bg-2); border: 1px solid var(--border);

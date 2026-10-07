@@ -1,7 +1,11 @@
 //! PDF upload + deterministic "understanding" of a document.
 //!
 //! `POST /api/documents` accepts a multipart upload, extracts text, detects
-//! dates and suggests tasks — fully offline (no LLM required).
+//! dates and suggests tasks — fully offline (no LLM required). When the client
+//! also sends `ai_provider` (+ optional `ai_model`) form fields, the server asks
+//! the configured AI provider to refine the candidates; any failure silently
+//! falls back to the deterministic suggestions (the response carries a
+//! `refined` flag so the UI can tell which path ran).
 //!
 //! `POST /api/boards/:board_id/import` takes the same analysis and materializes
 //! the suggested tasks as real todos on the board.
@@ -19,29 +23,94 @@ use crate::models::CreateTodo;
 
 const MAX_PDF_BYTES: usize = 15 * 1024 * 1024; // 15 Mo
 
+/// The deterministic analysis plus a flag telling the client whether an AI
+/// provider refined the suggested tasks.
+#[derive(serde::Serialize)]
+struct AnalysisResponse {
+    #[serde(flatten)]
+    analysis: crate::pdf_extract::DocumentAnalysis,
+    /// `true` when an AI provider successfully refined the tasks; `false` for
+    /// the deterministic path (no provider configured or call failed).
+    refined: bool,
+}
+
 pub fn routes() -> Router<Arc<crate::api::AppState>> {
     Router::new()
         .route("/api/documents", post(upload_document))
         .route("/api/boards/:board_id/import", post(import_into_board))
 }
 
-/// Analyze an uploaded PDF and return the deterministic analysis.
+/// Analyze an uploaded PDF and return the analysis (optionally AI-refined).
 async fn upload_document(
-    State(state): State<Arc<crate::api::AppState>>,
+    State(_state): State<Arc<crate::api::AppState>>,
     mut multipart: Multipart,
-) -> Result<Json<crate::pdf_extract::DocumentAnalysis>, ApiError> {
+) -> Result<Json<AnalysisResponse>, ApiError> {
+    let (bytes, ai_provider, ai_model) = read_upload(&mut multipart).await?;
+
+    // PDF parsing is CPU-bound; run it off the async runtime.
+    let mut analysis = tokio::task::spawn_blocking(move || crate::pdf_extract::analyze_pdf(&bytes))
+        .await
+        .map_err(|e| ApiError::internal(format!("tâche d'extraction: {e}")))
+        .and_then(|r| r.map_err(ApiError::internal))?;
+
+    // Optional AI refinement with a guaranteed deterministic fallback.
+    let mut refined = false;
+    if !ai_provider.trim().is_empty() {
+        match crate::ai::refine_tasks(&ai_provider, &ai_model, &analysis.preview, &analysis.suggested_tasks)
+            .await
+        {
+            Ok(tasks) => {
+                analysis.suggested_tasks = tasks;
+                refined = true;
+            }
+            Err(e) => tracing::warn!(provider = %ai_provider, error = %e, "raffinement IA indisponible — fallback déterministe"),
+        }
+    }
+
+    Ok(Json(AnalysisResponse { analysis, refined }))
+}
+
+/// Read the PDF bytes plus the optional AI form fields from a multipart body
+/// in a single pass (a multipart stream can only be consumed once).
+async fn read_upload(
+    multipart: &mut Multipart,
+) -> Result<(Vec<u8>, String, String), ApiError> {
     let mut data: Option<Vec<u8>> = None;
+    let mut provider = String::new();
+    let mut model = String::new();
+
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| ApiError::internal(format!("multipart invalide: {e}")))?
     {
-        if field.name().is_some_and(|n| n == "file") {
-            let bytes = field
-                .bytes()
-                .await
-                .map_err(|e| ApiError::internal(format!("lecture du fichier: {e}")))?;
-            data = Some(bytes.to_vec());
+        match field.name() {
+            Some("file") => {
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| ApiError::internal(format!("lecture du fichier: {e}")))?;
+                data = Some(bytes.to_vec());
+            }
+            Some("ai_provider") => {
+                provider = String::from_utf8_lossy(
+                    &field
+                        .bytes()
+                        .await
+                        .map_err(|e| ApiError::internal(format!("lecture du champ: {e}")))?,
+                )
+                .into_owned();
+            }
+            Some("ai_model") => {
+                model = String::from_utf8_lossy(
+                    &field
+                        .bytes()
+                        .await
+                        .map_err(|e| ApiError::internal(format!("lecture du champ: {e}")))?,
+                )
+                .into_owned();
+            }
+            _ => {}
         }
     }
 
@@ -53,16 +122,7 @@ async fn upload_document(
         return Err(ApiError::internal("PDF trop volumineux (max 15 Mo)"));
     }
 
-    // PDF parsing is CPU-bound; run it off the async runtime.
-    let analysis = tokio::task::spawn_blocking(move || crate::pdf_extract::analyze_pdf(&bytes))
-        .await
-        .map_err(|e| ApiError::internal(format!("tâche d'extraction: {e}")))
-        .and_then(|r| r.map_err(ApiError::internal))?;
-
-    // `state` is intentionally unused here (analysis is stateless), but we keep
-    // the extractor for future LLM hooks.
-    let _ = &state;
-    Ok(Json(analysis))
+    Ok((bytes, provider, model))
 }
 
 /// Import a PDF into a board: analyze it, then create todos from the suggestions.
@@ -223,6 +283,8 @@ mod tests {
         // parser; assert the shape is right and it did not error.
         assert!(v.get("suggested_tasks").is_some());
         assert!(v.get("page_count").is_some());
+        // No AI provider requested → deterministic path, refined must be false.
+        assert_eq!(v.get("refined"), Some(&serde_json::Value::Bool(false)));
     }
 
     #[tokio::test]

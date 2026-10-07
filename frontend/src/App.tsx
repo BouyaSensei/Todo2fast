@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { api, type Board, type Comment, type DocumentAnalysis, type List, type Member, type Tag, type Todo } from './api'
+import { api, type AiModel, type AiProvider, type Board, type Comment, type DocumentAnalysis, type List, type Member, type Tag, type Todo } from './api'
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 
@@ -848,15 +848,42 @@ function PdfImportModal(props: {
   const [analysis, setAnalysis] = useState<DocumentAnalysis | null>(null)
   const [busy, setBusy] = useState(false)
   const [drag, setDrag] = useState(false)
+  // Raffinement IA (optionnel) — le mode offline reste la valeur par défaut.
+  const [providers, setProviders] = useState<AiProvider[]>([])
+  const [provider, setProvider] = useState('')
+  const [models, setModels] = useState<AiModel[]>([])
+  const [model, setModel] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const analyze = async (f: File) => {
+  // Détecte les providers IA disponibles à l'ouverture (aucune clé exposée).
+  useEffect(() => {
+    api.listAiProviders().then(setProviders).catch(() => {})
+  }, [])
+
+  // Charge la liste des modèles quand un provider est sélectionné.
+  useEffect(() => {
+    if (!provider) { setModels([]); setModel(''); return }
+    let alive = true
+    setModel('')
+    api.listAiModels(provider)
+      .then((ms) => {
+        if (!alive) return
+        setModels(ms)
+        if (ms.length) setModel(ms[0].id)
+      })
+      .catch(() => { if (alive) setModels([]) })
+    return () => { alive = false }
+  }, [provider])
+
+  const analyze = async (f: File, prov: string = provider, mod: string = model) => {
     setFile(f); setAnalysis(null); setBusy(true)
     try {
-      const a = await api.analyzePdf(f)
+      const a = await api.analyzePdf(f, prov ? { provider: prov, model: mod } : undefined)
       setAnalysis(a)
     } catch (e) { props.notify((e as Error).message, 'error') } finally { setBusy(false) }
   }
+
+  const availableProviders = providers.filter((p) => p.available)
 
   return (
     <div className="overlay" onClick={props.onClose}>
@@ -866,6 +893,28 @@ function PdfImportModal(props: {
           <button className="icon-btn" onClick={props.onClose}>✕</button>
         </div>
         <div className="modal-body">
+          {/* Raffinement IA — optionnel, off par défaut */}
+          <div className="ai-section">
+            <div className="section-label">Raffinement IA (optionnel)</div>
+            <div className="ai-controls">
+              <select value={provider} onChange={(e) => setProvider(e.target.value)} className="ai-select">
+                <option value="">Aucun — analyse offline</option>
+                {availableProviders.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </select>
+              {provider && (
+                <select value={model} onChange={(e) => setModel(e.target.value)} className="ai-select">
+                  {models.length === 0 ? (
+                    <option value="">(aucun modèle)</option>
+                  ) : (
+                    models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)
+                  )}
+                </select>
+              )}
+            </div>
+          </div>
+
           {!file ? (
             <div
               className={`dropzone ${drag ? 'drag' : ''}`}
@@ -876,7 +925,9 @@ function PdfImportModal(props: {
             >
               <div className="dz-icon">📄</div>
               <p style={{ margin: 0 }}>Déposez un PDF ici ou cliquez pour choisir</p>
-              <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--text-2)' }}>Le texte est extrait et les tâches suggérées automatiquement (offline).</p>
+              <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--text-2)' }}>
+                {provider ? `Le texte est extrait puis raffiné par ${availableProviders.find(p => p.id === provider)?.label ?? "l'IA"}.` : 'Le texte est extrait et les tâches suggérées automatiquement (offline).'}
+              </p>
               <input ref={inputRef} type="file" accept="application/pdf" hidden
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) analyze(f) }} />
             </div>
@@ -888,6 +939,11 @@ function PdfImportModal(props: {
                   <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
                   <div className="c-time">{(file.size / 1024).toFixed(0)} Ko</div>
                 </div>
+                {analysis && (
+                  <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => analyze(file)}>
+                    ↻ Re-analyser{provider ? ' avec l’IA' : ''}
+                  </button>
+                )}
                 <button className="btn btn-ghost btn-sm" onClick={() => { setFile(null); setAnalysis(null) }}>Changer</button>
               </div>
 
@@ -899,6 +955,7 @@ function PdfImportModal(props: {
                     <div className="stat-chip"><div className="num">{analysis.page_count}</div><div className="lbl">pages</div></div>
                     <div className="stat-chip"><div className="num">{analysis.char_count}</div><div className="lbl">caractères</div></div>
                     <div className="stat-chip"><div className="num">{analysis.suggested_tasks.length}</div><div className="lbl">tâches suggérées</div></div>
+                    {analysis.refined && <span className="badge ai-refined">✨ raffinées par l'IA</span>}
                   </div>
 
                   {analysis.detected_dates.length > 0 && (

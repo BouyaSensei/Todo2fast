@@ -10,6 +10,7 @@ use axum::{
     Json, Router,
 };
 
+pub mod ai;
 pub mod boards;
 pub mod comments;
 pub mod documents;
@@ -60,6 +61,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(lists::routes())
         .merge(tags::routes())
         .merge(members::routes())
+        .merge(ai::routes())
 }
 
 async fn health(State(_state): State<Arc<AppState>>) -> Json<serde_json::Value> {

@@ -69,6 +69,20 @@ export interface DocumentAnalysis {
   detected_dates: string[]
   suggested_tasks: SuggestedTask[]
   preview: string
+  /// `true` quand un provider IA a raffiné les tâches ; `false` en mode
+  /// déterministe (provider absent ou appel en échec → fallback).
+  refined?: boolean
+}
+
+export interface AiProvider {
+  id: string
+  label: string
+  available: boolean
+  default_model: string
+}
+
+export interface AiModel {
+  id: string
 }
 
 export interface ImportResult {
@@ -165,10 +179,17 @@ export const api = {
       `/api/comments/${commentId}/reactions?author=${encodeURIComponent(author)}&emoji=${encodeURIComponent(emoji)}`,
     ),
 
-  // Import PDF — upload multipart + analyse
-  async analyzePdf(file: File): Promise<DocumentAnalysis> {
+  // Import PDF — upload multipart + analyse (optionnellement raffinée par l'IA)
+  async analyzePdf(
+    file: File,
+    opts?: { provider?: string; model?: string },
+  ): Promise<DocumentAnalysis> {
     const form = new FormData()
     form.append('file', file)
+    if (opts?.provider) {
+      form.append('ai_provider', opts.provider)
+      if (opts.model) form.append('ai_model', opts.model)
+    }
     const res = await fetch('/api/documents', { method: 'POST', body: form })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
@@ -176,6 +197,11 @@ export const api = {
     }
     return res.json() as Promise<DocumentAnalysis>
   },
+
+  // Providers IA disponibles (aucune clé n'est jamais exposée au client)
+  listAiProviders: () => http<AiProvider[]>('GET', '/api/ai/providers'),
+  listAiModels: (providerId: string) =>
+    http<AiModel[]>('GET', `/api/ai/providers/${encodeURIComponent(providerId)}/models`),
 
   // Import PDF directement dans un board (crée les tâches suggérées)
   async importPdf(boardId: number, file: File): Promise<ImportResult> {
