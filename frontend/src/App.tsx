@@ -425,7 +425,7 @@ function BoardHeader({ board, membersCount, onImport, onAccess, onNewBoard }: {
           <button className="btn btn-ghost" onClick={onAccess}>
             👥 Accès{membersCount > 0 ? ` (${membersCount})` : ''}
           </button>
-          <button className="btn btn-primary" onClick={onImport}>📄 Importer un PDF</button>
+          <button className="btn btn-primary" onClick={onImport}>📄 Importer un document</button>
         </>
       )}
       {!board && <button className="btn btn-primary" onClick={onNewBoard}>+ Nouveau board</button>}
@@ -837,7 +837,7 @@ function TodoDetailPanel(props: {
   )
 }
 
-// ─── Modale d'import PDF ─────────────────────────────────────────────────────
+// ─── Modale d'import de document (PDF / Markdown) ─────────────────────────────
 
 function PdfImportModal(props: {
   boardName: string; user: string
@@ -889,7 +889,7 @@ function PdfImportModal(props: {
     <div className="overlay" onClick={props.onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2>📄 Importer un document PDF</h2>
+          <h2>📄 Importer un document</h2>
           <button className="icon-btn" onClick={props.onClose}>✕</button>
         </div>
         <div className="modal-body">
@@ -924,11 +924,11 @@ function PdfImportModal(props: {
               onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files[0]; if (f) analyze(f) }}
             >
               <div className="dz-icon">📄</div>
-              <p style={{ margin: 0 }}>Déposez un PDF ici ou cliquez pour choisir</p>
+              <p style={{ margin: 0 }}>Déposez un PDF ou Markdown ici, ou cliquez pour choisir</p>
               <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--text-2)' }}>
                 {provider ? `Le texte est extrait puis raffiné par ${availableProviders.find(p => p.id === provider)?.label ?? "l'IA"}.` : 'Le texte est extrait et les tâches suggérées automatiquement (offline).'}
               </p>
-              <input ref={inputRef} type="file" accept="application/pdf" hidden
+              <input ref={inputRef} type="file" accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain" hidden
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) analyze(f) }} />
             </div>
           ) : (
@@ -952,7 +952,7 @@ function PdfImportModal(props: {
               {analysis && (
                 <>
                   <div className="analysis-summary">
-                    <div className="stat-chip"><div className="num">{analysis.page_count}</div><div className="lbl">pages</div></div>
+                    <div className="stat-chip"><div className="num">{analysis.page_count}</div><div className="lbl">pages / doc</div></div>
                     <div className="stat-chip"><div className="num">{analysis.char_count}</div><div className="lbl">caractères</div></div>
                     <div className="stat-chip"><div className="num">{analysis.suggested_tasks.length}</div><div className="lbl">tâches suggérées</div></div>
                     {analysis.refined && <span className="badge ai-refined">✨ raffinées par l'IA</span>}

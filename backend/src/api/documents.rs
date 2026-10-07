@@ -1,11 +1,11 @@
-//! PDF upload + deterministic "understanding" of a document.
+//! Document upload + deterministic "understanding".
 //!
-//! `POST /api/documents` accepts a multipart upload, extracts text, detects
-//! dates and suggests tasks — fully offline (no LLM required). When the client
-//! also sends `ai_provider` (+ optional `ai_model`) form fields, the server asks
-//! the configured AI provider to refine the candidates; any failure silently
-//! falls back to the deterministic suggestions (the response carries a
-//! `refined` flag so the UI can tell which path ran).
+//! `POST /api/documents` accepts a multipart upload (PDF or Markdown), extracts
+//! text, detects dates and suggests tasks — fully offline (no LLM required).
+//! When the client also sends `ai_provider` (+ optional `ai_model`) form fields,
+//! the server asks the configured AI provider to refine the candidates; any
+//! failure silently falls back to the deterministic suggestions (the response
+//! carries a `refined` flag so the UI can tell which path ran).
 //!
 //! `POST /api/boards/:board_id/import` takes the same analysis and materializes
 //! the suggested tasks as real todos on the board.
@@ -40,15 +40,16 @@ pub fn routes() -> Router<Arc<crate::api::AppState>> {
         .route("/api/boards/:board_id/import", post(import_into_board))
 }
 
-/// Analyze an uploaded PDF and return the analysis (optionally AI-refined).
+/// Analyze an uploaded document (PDF or Markdown) and return the analysis
+/// (optionally AI-refined). The file type is detected from its extension.
 async fn upload_document(
     State(_state): State<Arc<crate::api::AppState>>,
     mut multipart: Multipart,
 ) -> Result<Json<AnalysisResponse>, ApiError> {
-    let (bytes, ai_provider, ai_model) = read_upload(&mut multipart).await?;
+    let (bytes, filename, ai_provider, ai_model) = read_upload(&mut multipart).await?;
 
-    // PDF parsing is CPU-bound; run it off the async runtime.
-    let mut analysis = tokio::task::spawn_blocking(move || crate::pdf_extract::analyze_pdf(&bytes))
+    // Parsing is CPU-bound; run it off the async runtime.
+    let mut analysis = tokio::task::spawn_blocking(move || analyze_bytes(&filename, &bytes))
         .await
         .map_err(|e| ApiError::internal(format!("tâche d'extraction: {e}")))
         .and_then(|r| r.map_err(ApiError::internal))?;
@@ -77,10 +78,33 @@ async fn upload_document(
     Ok(Json(AnalysisResponse { analysis, refined }))
 }
 
-/// Read the PDF bytes plus the optional AI form fields from a multipart body
-/// in a single pass (a multipart stream can only be consumed once).
-async fn read_upload(multipart: &mut Multipart) -> Result<(Vec<u8>, String, String), ApiError> {
+/// Route raw bytes to the right analyzer based on the file extension.
+fn analyze_bytes(
+    filename: &str,
+    data: &[u8],
+) -> Result<crate::pdf_extract::DocumentAnalysis, String> {
+    let ext = std::path::Path::new(filename)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "md" | "markdown" | "txt" => {
+            let text =
+                std::str::from_utf8(data).map_err(|_| "fichier texte non-UTF-8".to_string())?;
+            Ok(crate::pdf_extract::analyze_markdown(text))
+        }
+        _ => crate::pdf_extract::analyze_pdf(data),
+    }
+}
+
+/// Read the document bytes, its filename and the optional AI form fields from a
+/// multipart body in a single pass (a multipart stream can only be consumed once).
+async fn read_upload(
+    multipart: &mut Multipart,
+) -> Result<(Vec<u8>, String, String, String), ApiError> {
     let mut data: Option<Vec<u8>> = None;
+    let mut filename = String::new();
     let mut provider = String::new();
     let mut model = String::new();
 
@@ -91,6 +115,9 @@ async fn read_upload(multipart: &mut Multipart) -> Result<(Vec<u8>, String, Stri
     {
         match field.name() {
             Some("file") => {
+                if let Some(fn_) = field.file_name() {
+                    filename = fn_.to_string();
+                }
                 let bytes = field
                     .bytes()
                     .await
@@ -124,25 +151,30 @@ async fn read_upload(multipart: &mut Multipart) -> Result<(Vec<u8>, String, Stri
         return Err(ApiError::internal("fichier vide"));
     }
     if bytes.len() > MAX_PDF_BYTES {
-        return Err(ApiError::internal("PDF trop volumineux (max 15 Mo)"));
+        return Err(ApiError::internal("fichier trop volumineux (max 15 Mo)"));
     }
 
-    Ok((bytes, provider, model))
+    Ok((bytes, filename, provider, model))
 }
 
-/// Import a PDF into a board: analyze it, then create todos from the suggestions.
+/// Import a document (PDF or Markdown) into a board: analyze it, then create
+/// todos from the suggestions.
 async fn import_into_board(
     State(state): State<Arc<crate::api::AppState>>,
     Path(board_id): Path<i64>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut data: Option<Vec<u8>> = None;
+    let mut filename = String::new();
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| ApiError::internal(format!("multipart invalide: {e}")))?
     {
         if field.name().is_some_and(|n| n == "file") {
+            if let Some(fn_) = field.file_name() {
+                filename = fn_.to_string();
+            }
             let bytes = field
                 .bytes()
                 .await
@@ -153,17 +185,20 @@ async fn import_into_board(
 
     let bytes = data.ok_or_else(|| ApiError::internal("champ 'file' manquant"))?;
     if bytes.len() > MAX_PDF_BYTES {
-        return Err(ApiError::internal("PDF trop volumineux (max 15 Mo)"));
+        return Err(ApiError::internal("fichier trop volumineux (max 15 Mo)"));
     }
 
     // Verify the board exists before doing any work.
     let board =
         crate::repo::get_board(&state.db, board_id)?.ok_or_else(|| ApiError::not_found("board"))?;
 
-    let analysis = tokio::task::spawn_blocking(move || crate::pdf_extract::analyze_pdf(&bytes))
-        .await
-        .map_err(|e| ApiError::internal(format!("tâche d'extraction: {e}")))
-        .and_then(|r| r.map_err(ApiError::internal))?;
+    let analysis = tokio::task::spawn_blocking({
+        let fn_name = filename.clone();
+        move || analyze_bytes(&fn_name, &bytes)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("tâche d'extraction: {e}")))
+    .and_then(|r| r.map_err(ApiError::internal))?;
 
     // Materialize the suggested tasks as todos on the board.
     let mut created = Vec::new();
@@ -171,7 +206,12 @@ async fn import_into_board(
         let input = CreateTodo {
             title: task.title.clone(),
             description: Some(format!(
-                "Importé depuis un document PDF.\nExtrait: {}",
+                "Importé depuis un document ({}).\nExtrait: {}",
+                if is_markdown(&filename) {
+                    "Markdown"
+                } else {
+                    "PDF"
+                },
                 analysis.preview
             )),
             due_date: task.due_date.clone(),
@@ -189,6 +229,15 @@ async fn import_into_board(
         "created_count": created.len(),
         "created": created,
     })))
+}
+
+/// Quick check: is the filename a Markdown / plain-text file?
+fn is_markdown(filename: &str) -> bool {
+    let ext = std::path::Path::new(filename)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    matches!(ext.as_str(), "md" | "markdown" | "txt")
 }
 
 #[cfg(test)]
@@ -293,16 +342,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_rejects_non_pdf() {
+    async fn upload_analyzes_markdown() {
         let app = build();
         let boundary = "----t2ftestboundary";
+        let md_content = "# Sprint\n- [ ] Préparer la démo avant le 31/10/2026\n- Réviser le code";
         let mut body = Vec::new();
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(
-            b"Content-Disposition: form-data; name=\"file\"; filename=\"x.txt\"\r\n",
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"sprint.md\"\r\n",
         );
-        body.extend_from_slice(b"Content-Type: text/plain\r\n\r\n");
-        body.extend_from_slice(b"hello world, definitely not a pdf");
+        body.extend_from_slice(b"Content-Type: text/markdown\r\n\r\n");
+        body.extend_from_slice(md_content.as_bytes());
         body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
         let req = axum::http::Request::builder()
             .method("POST")
@@ -314,6 +364,43 @@ mod tests {
             .body(axum::body::Body::from(body))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["page_count"], 1);
+        assert_eq!(v["refined"], false);
+        // The checkbox task must be in the suggestions.
+        let tasks = v["suggested_tasks"].as_array().unwrap();
+        assert!(tasks.iter().any(|t| t["title"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Préparer la démo")));
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_unknown_binary() {
+        let app = build();
+        let boundary = "----t2ftestboundary";
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"x.bin\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+        // Binary data that is neither valid PDF nor UTF-8 text.
+        body.extend_from_slice(&[0xFF, 0xFE, 0x00, 0x01, 0x02, 0x03]);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/documents")
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        // Unknown extension → treated as PDF → fails (no %PDF header).
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

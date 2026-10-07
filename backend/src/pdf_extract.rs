@@ -194,9 +194,20 @@ fn suggest_tasks(text: &str) -> Vec<ExtractedTask> {
         if line.is_empty() || line.len() < 4 || line.len() > 120 {
             continue;
         }
+        // Skip Markdown headings — they are section titles, not tasks.
+        if line.starts_with('#') {
+            continue;
+        }
         // Strip leading bullet / number markers.
         let cleaned = line.trim_start_matches(['-', '*', '•', '·']).trim_start();
         let cleaned = num_re.replace(cleaned, "").to_string();
+        // Strip a Markdown task-list checkbox: "[ ]" or "[x]".
+        let cleaned = cleaned
+            .trim_start()
+            .strip_prefix("[ ]")
+            .or_else(|| cleaned.trim_start().strip_prefix("[x]"))
+            .or_else(|| cleaned.trim_start().strip_prefix("[X]"))
+            .unwrap_or(cleaned.trim_start());
         let cleaned = cleaned.trim().to_string();
         if cleaned.chars().count() < 4 {
             continue;
@@ -229,6 +240,22 @@ pub fn analyze_pdf(data: &[u8]) -> Result<DocumentAnalysis, String> {
         suggested_tasks,
         preview,
     })
+}
+
+/// Analyze a Markdown (or plain-text) document. The file content is used as-is;
+/// bullets, numbered items and `- [ ]` checkboxes become task candidates.
+pub fn analyze_markdown(text: &str) -> DocumentAnalysis {
+    let char_count = text.chars().count();
+    let detected_dates = find_dates(text);
+    let suggested_tasks = suggest_tasks(text);
+    let preview: String = text.chars().take(280).collect();
+    DocumentAnalysis {
+        page_count: 1, // text document — no pagination
+        char_count,
+        detected_dates,
+        suggested_tasks,
+        preview,
+    }
 }
 
 #[cfg(test)]
@@ -291,5 +318,22 @@ mod tests {
     #[test]
     fn rejects_non_pdf() {
         assert!(analyze_pdf(b"this is not a pdf").is_err());
+    }
+
+    #[test]
+    fn analyzes_markdown_bullets_and_checkboxes() {
+        let md = "# Sprint\n- [ ] Préparer la démo avant le 31/10/2026\n- [x] Réviser le code\n* Envoyer le rapport le 5 décembre 2026";
+        let a = analyze_markdown(md);
+        assert_eq!(a.page_count, 1);
+        assert!(a
+            .suggested_tasks
+            .iter()
+            .any(|t| t.title.contains("Préparer la démo")));
+        assert!(a
+            .suggested_tasks
+            .iter()
+            .any(|t| t.due_date.as_deref() == Some("2026-10-31")));
+        // Checkbox must be stripped from the title.
+        assert!(!a.suggested_tasks.iter().any(|t| t.title.contains("[ ]")));
     }
 }
