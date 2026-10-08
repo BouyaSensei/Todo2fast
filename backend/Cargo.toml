@@ -20,6 +20,13 @@ pdf-extract = "0.12"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# Native app window (Windows): WebView2 — the same engine as Asana/Figma desktop.
+# `tao` owns the native window + event loop; `wry` renders the UI in a WebView2
+# control (modern Edge/Chromium, not the legacy IE WebBrowser).
+[target.'cfg(windows)'.dependencies]
+tao = "0.34"
+wry = "0.57"
+
 [dev-dependencies]
 tokio-test = "0.4"
 http-body-util = "0.1"

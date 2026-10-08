@@ -1,3 +1,8 @@
+//! Todo2fast — entry point.
+//!
+//! Starts the HTTP API (axum + SQLite) and, on Windows, a native app window
+//! (WebView2 — the same engine as Asana/Figma desktop) showing the UI at `/`.
+
 pub mod ai;
 pub mod api;
 pub mod db;
@@ -40,35 +45,221 @@ pub fn build_router(state: Arc<api::AppState>, web_dir: Option<std::path::PathBu
     app
 }
 
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "todo2fast=info,tower_http=info".into()),
-        )
-        .init();
+/// Per-user data directory: `%LOCALAPPDATA%\Todo2fast` on Windows,
+/// `~/.local/share/todo2fast` elsewhere. Always writable by the current user,
+/// even when the executable lives in read-only `Program Files`.
+fn data_dir() -> std::path::PathBuf {
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        return std::path::PathBuf::from(local).join("Todo2fast");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return std::path::PathBuf::from(home).join(".local/share/todo2fast");
+    }
+    std::path::PathBuf::from(".")
+}
 
-    let state = Arc::new(api::AppState::from_env().expect("failed to open database"));
+/// Resolve the database path: `T2F_DB_PATH` wins, otherwise the per-user data dir.
+fn db_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("T2F_DB_PATH") {
+        return std::path::PathBuf::from(p);
+    }
+    data_dir().join("todo2fast.sqlite")
+}
 
-    // Optional: serve the built frontend (SPA) alongside the API.
-    // Look for T2F_WEB_DIR, then ../frontend/dist (dev layout), then ./web (installed layout).
+/// Bind to the preferred port; fall back to 8081-8090, then any free port.
+#[cfg(not(windows))]
+async fn bind_with_fallback(preferred: &str) -> (tokio::net::TcpListener, std::net::SocketAddr) {
+    let mut candidates = vec![preferred.to_string()];
+    if preferred.ends_with(":8080") {
+        for p in 8081..=8090 {
+            candidates.push(format!("0.0.0.0:{p}"));
+        }
+    }
+    candidates.push("0.0.0.0:0".into()); // OS-assigned free port
+
+    for c in &candidates {
+        if let Ok(l) =
+            tokio::net::TcpListener::bind(c.parse::<std::net::SocketAddr>().expect("addr")).await
+        {
+            let addr = l.local_addr().expect("local_addr");
+            return (l, addr);
+        }
+    }
+    panic!("no free port available");
+}
+
+/// Windows: open a native application window (WebView2 — the same engine as
+/// Asana/Figma desktop) showing the UI, and keep it alive until the user closes
+/// it.
+///
+/// WebView2 requires the calling thread to be a COM STA apartment with a Win32
+/// message pump, so this runs on the **main** thread (not a spawned one). The
+/// tokio runtime that serves the HTTP API is moved onto a dedicated OS thread
+/// before we enter the event loop. `event_loop.run` never returns — it calls
+/// `std::process::exit` once the last window is destroyed, which is exactly the
+/// desktop-app behavior we want (close the window → quit the app).
+///
+/// The server binds a tokio listener *inside* its own thread and reports the
+/// address back over an mpsc channel, so the window can load the correct URL.
+/// A dedicated OS thread running `block_on` is the proven pattern for tao/wry:
+/// the runtime's workers handle connections while the main thread drives the
+/// WebView2 event loop. (Binding via `std::net::TcpListener` + `from_std`, and
+/// spawning axum directly on the runtime from the main thread, both left
+/// hyper unable to read connections in testing.)
+#[cfg(windows)]
+fn run_native_window(rt: tokio::runtime::Runtime, app: Router, preferred: String) -> ! {
+    let (addr_tx, addr_rx) = std::sync::mpsc::channel();
+
+    // Serve the API on a dedicated OS thread with its own runtime. `block_on`
+    // from a non-worker thread is the correct way to run the server here: the
+    // multi-thread runtime spawns worker threads that accept and handle
+    // connections in the background while this thread just blocks.
+    std::thread::Builder::new()
+        .name("t2f-http".into())
+        .spawn(move || {
+            rt.block_on(async move {
+                let mut candidates = vec![preferred.clone()]; // preferred first
+                if preferred.ends_with(":8080") {
+                    for p in 8081..=8090 {
+                        candidates.push(format!("0.0.0.0:{p}"));
+                    }
+                }
+                candidates.push("0.0.0.0:0".into()); // OS-assigned free port
+
+                let mut listener = None;
+                for c in &candidates {
+                    if let Ok(l) = tokio::net::TcpListener::bind(c).await {
+                        listener = Some(l);
+                        break;
+                    }
+                }
+                let listener = listener.expect("no free port available");
+                let addr = listener.local_addr().expect("local_addr");
+                tracing::info!("Todo2fast listening on http://{}", addr);
+                let _ = addr_tx.send(addr); // unblock the main thread
+
+                if let Err(e) = axum::serve(listener, app).await {
+                    tracing::error!("server error: {e}");
+                }
+            });
+        })
+        .expect("spawn http thread");
+
+    // Wait for the bound address so the window loads the right URL.
+    let addr = addr_rx.recv().expect("bound address from server thread");
+    let url = format!("http://{}/", addr);
+    tracing::info!("native window loading: {url}");
+
+    let event_loop = tao::event_loop::EventLoop::new();
+    let window = tao::window::WindowBuilder::new()
+        .with_title("Todo2fast")
+        .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 800.0))
+        .build(&event_loop)
+        .expect("failed to create native window");
+
+    let _webview = wry::WebViewBuilder::new()
+        .with_url(&url)
+        .build(&window)
+        .expect("failed to create WebView2");
+
+    tracing::info!("native window ready: {url}");
+
+    // The catch-all arm is required: the closure must handle every event so the
+    // loop keeps running; only `Destroyed` triggers a quit.
+    #[allow(clippy::single_match)]
+    event_loop.run(move |event, _target, control_flow| match event {
+        tao::event::Event::WindowEvent {
+            event: tao::event::WindowEvent::Destroyed,
+            ..
+        } => {
+            // Last window closed → quit the app (run() then process::exit).
+            tracing::info!("window closed — shutting down");
+            *control_flow = tao::event_loop::ControlFlow::Exit;
+        }
+        _ => {}
+    });
+}
+
+/// Shared startup: per-user data dir, logging (stdout + file), database and the
+/// app router. Returns everything `main` needs before binding a port.
+fn bootstrap() -> (std::path::PathBuf, Arc<api::AppState>, Router) {
+    let data = data_dir();
+    std::fs::create_dir_all(&data).ok();
+
+    // Logging: stdout (dev) + file in the per-user data dir (installed app —
+    // this is where startup errors end up when no console is visible).
+    let log_path = data.join("todo2fast.log");
+    if let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        use tracing_subscriber::prelude::*;
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "todo2fast=info,tower_http=info".into()),
+            )
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(std::sync::Arc::new(file)),
+            )
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "todo2fast=info,tower_http=info".into()),
+            )
+            .init();
+    }
+
+    let db = db_path();
+    tracing::info!("database: {}", db.display());
+    let state = Arc::new(api::AppState {
+        db: crate::db::Db::open(&db).expect("failed to open database"),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    });
+
+    // Frontend location: T2F_WEB_DIR (set by the installer), then dev layout,
+    // then ./web next to the executable.
     let web_dir = std::env::var("T2F_WEB_DIR")
         .ok()
         .map(std::path::PathBuf::from)
         .or_else(|| std::path::Path::new("../frontend/dist").canonicalize().ok())
         .or_else(|| std::path::Path::new("web").canonicalize().ok());
 
-    let app = build_router(state, web_dir);
+    (data, state.clone(), build_router(state, web_dir))
+}
 
-    let addr: std::net::SocketAddr = std::env::var("T2F_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:8080".into())
-        .parse()
-        .expect("invalid T2F_ADDR");
+#[cfg(windows)]
+fn main() {
+    let (_data, _state, app) = bootstrap();
 
+    let preferred = std::env::var("T2F_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
+
+    // The tokio runtime is created here and handed to run_native_window, which
+    // moves it onto a dedicated OS thread so the main thread can drive WebView2.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("build tokio runtime");
+
+    tracing::info!("opening native window (preferred {preferred})");
+    run_native_window(rt, app, preferred);
+}
+
+#[cfg(not(windows))]
+#[tokio::main]
+async fn main() {
+    let (_data, _state, app) = bootstrap();
+
+    let preferred = std::env::var("T2F_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
+    let (listener, addr) = bind_with_fallback(&preferred).await;
     tracing::info!("Todo2fast listening on http://{}", addr);
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("bind failed");
+
+    println!("UI: http://{}/", addr);
     axum::serve(listener, app).await.expect("server error");
 }
