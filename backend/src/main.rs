@@ -165,7 +165,9 @@ fn run_native_window(rt: tokio::runtime::Runtime, app: Router, preferred: String
 
     // Wait for the bound address so the window loads the right URL.
     let addr = addr_rx.recv().expect("bound address from server thread");
-    let url = format!("http://{}/", addr);
+    // The listener binds 0.0.0.0 (all interfaces) but a webview cannot
+    // navigate to "http://0.0.0.0:…". Use 127.0.0.1 for the actual URL.
+    let url = format!("http://127.0.0.1:{}/", addr.port());
     tracing::info!("native window loading: {url}");
 
     let event_loop = tao::event_loop::EventLoop::new();
