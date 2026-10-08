@@ -123,6 +123,17 @@ async fn bind_with_fallback(preferred: &str) -> (tokio::net::TcpListener, std::n
 /// hyper unable to read connections in testing.)
 #[cfg(windows)]
 fn run_native_window(rt: tokio::runtime::Runtime, app: Router, preferred: String) -> ! {
+    // WebView2 stores its cache (EBWebView) next to the executable by default.
+    // When installed under Program Files that folder is read-only, so creating
+    // the webview fails silently and no window ever appears. Force the data
+    // folder into the per-user data dir (writable) before the first WebView2 is
+    // created — this must happen on the main thread, before any other thread.
+    let wv_dir = data_dir().join("webview2");
+    std::fs::create_dir_all(&wv_dir).ok();
+    unsafe {
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &wv_dir);
+    }
+
     let (addr_tx, addr_rx) = std::sync::mpsc::channel();
 
     // Serve the API on a dedicated OS thread with its own runtime. `block_on`
