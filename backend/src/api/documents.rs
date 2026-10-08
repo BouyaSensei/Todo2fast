@@ -250,7 +250,7 @@ mod tests {
 
     fn build() -> Router {
         let state = Arc::new(AppState::in_memory().expect("db"));
-        crate::build_router(state)
+        crate::build_router(state, None)
     }
 
     /// A minimal, *valid* single-page PDF (correct xref + startxref) whose text

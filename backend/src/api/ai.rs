@@ -46,7 +46,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn app() -> Router {
-        build_router(Arc::new(AppState::default()))
+        build_router(Arc::new(AppState::default()), None)
     }
 
     #[tokio::test]

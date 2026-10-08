@@ -9,6 +9,8 @@
 #define MyAppExeName "todo2fast.exe"
 ; Path to the release binary (relative to this .iss file)
 #define MyExePath "..\backend\target\release\todo2fast.exe"
+; Path to the built frontend (SPA served by the backend)
+#define MyWebPath "..\frontend\dist"
 
 [Setup]
 AppId={{8F1C4A7E-3D2B-4E6A-9C5F-A1B2C3D4E5F6}
@@ -39,6 +41,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#MyExePath}"; DestDir: "{app}"; Flags: ignoreversion
+; Frontend SPA — served by the backend from {app}\web (T2F_WEB_DIR fallback)
+Source: "{#MyWebPath}\*"; DestDir: "{app}\web"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; SQLite DB is created at first run in the user profile (portable per-user data)
 
 [Icons]

@@ -8,6 +8,9 @@ frontend/dist/
 frontend/cypress/videos/
 frontend/cypress/screenshots/
 
+# Installer build output (Setup.exe)
+installer/Output/
+
 # Data & secrets
 *.sqlite
 *.sqlite-wal

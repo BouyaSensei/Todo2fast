@@ -136,7 +136,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_returns_ok() {
-        let app = build_router(Arc::new(AppState::default()));
+        let app = build_router(Arc::new(AppState::default()), None);
         let v = get(app, "/api/health").await;
         assert_eq!(v["status"], "ok");
         assert_eq!(v["service"], "todo2fast");
