@@ -58,6 +58,11 @@ fn data_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(".")
 }
 
+/// Default port, unique to Todo2fast (avoids clashing with the generic 8080
+/// that other local tools grab). Overridable via `T2F_ADDR`. If it is already
+/// taken the app falls back to the next ports, then to an OS-assigned free one.
+const DEFAULT_PORT: u16 = 42817;
+
 /// Resolve the database path: `T2F_DB_PATH` wins, otherwise the per-user data dir.
 fn db_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("T2F_DB_PATH") {
@@ -66,18 +71,28 @@ fn db_path() -> std::path::PathBuf {
     data_dir().join("todo2fast.sqlite")
 }
 
-/// Bind to the preferred port; fall back to 8081-8090, then any free port.
-#[cfg(not(windows))]
-async fn bind_with_fallback(preferred: &str) -> (tokio::net::TcpListener, std::net::SocketAddr) {
+/// Candidate bind addresses, in order: the preferred port first, then the next
+/// ten ports if it is taken, and finally an OS-assigned free port (`:0`). This
+/// guarantees the app always finds a usable port.
+fn port_candidates(preferred: &str) -> Vec<String> {
     let mut candidates = vec![preferred.to_string()];
-    if preferred.ends_with(":8080") {
-        for p in 8081..=8090 {
-            candidates.push(format!("0.0.0.0:{p}"));
+    if let Some(p) = preferred
+        .rsplit(':')
+        .next()
+        .and_then(|s| s.parse::<u16>().ok())
+    {
+        for i in 1..=10 {
+            candidates.push(format!("0.0.0.0:{}", p.wrapping_add(i)));
         }
     }
     candidates.push("0.0.0.0:0".into()); // OS-assigned free port
+    candidates
+}
 
-    for c in &candidates {
+/// Bind to the preferred port; fall back to the next ports, then any free port.
+#[cfg(not(windows))]
+async fn bind_with_fallback(preferred: &str) -> (tokio::net::TcpListener, std::net::SocketAddr) {
+    for c in &port_candidates(preferred) {
         if let Ok(l) =
             tokio::net::TcpListener::bind(c.parse::<std::net::SocketAddr>().expect("addr")).await
         {
@@ -118,16 +133,8 @@ fn run_native_window(rt: tokio::runtime::Runtime, app: Router, preferred: String
         .name("t2f-http".into())
         .spawn(move || {
             rt.block_on(async move {
-                let mut candidates = vec![preferred.clone()]; // preferred first
-                if preferred.ends_with(":8080") {
-                    for p in 8081..=8090 {
-                        candidates.push(format!("0.0.0.0:{p}"));
-                    }
-                }
-                candidates.push("0.0.0.0:0".into()); // OS-assigned free port
-
                 let mut listener = None;
-                for c in &candidates {
+                for c in &port_candidates(&preferred) {
                     if let Ok(l) = tokio::net::TcpListener::bind(c).await {
                         listener = Some(l);
                         break;
@@ -238,7 +245,8 @@ fn bootstrap() -> (std::path::PathBuf, Arc<api::AppState>, Router) {
 fn main() {
     let (_data, _state, app) = bootstrap();
 
-    let preferred = std::env::var("T2F_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
+    let preferred =
+        std::env::var("T2F_ADDR").unwrap_or_else(|_| format!("0.0.0.0:{}", DEFAULT_PORT));
 
     // The tokio runtime is created here and handed to run_native_window, which
     // moves it onto a dedicated OS thread so the main thread can drive WebView2.
@@ -256,7 +264,8 @@ fn main() {
 async fn main() {
     let (_data, _state, app) = bootstrap();
 
-    let preferred = std::env::var("T2F_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
+    let preferred =
+        std::env::var("T2F_ADDR").unwrap_or_else(|_| format!("0.0.0.0:{}", DEFAULT_PORT));
     let (listener, addr) = bind_with_fallback(&preferred).await;
     tracing::info!("Todo2fast listening on http://{}", addr);
 
