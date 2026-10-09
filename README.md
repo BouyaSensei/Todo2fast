@@ -1,110 +1,138 @@
 # Todo2fast
 
-Un gestionnaire de tâches collaboratif et rapide, avec **compréhension de documents**.
+Gestionnaire de tâches collaboratif avec **compréhension de documents** : importez un PDF ou un Markdown, l'application en extrait les tâches (dates, priorités, responsables) et vous propose d'en créer des cartes prêtes à l'emploi.
 
-Déposez un PDF (ou un document). Todo2fast le lit, en extrait les dates et les
-actions à faire, et les transforme en tâches — puis vous et votre équipe
-collaborez dessus : commentaires, réactions, tableaux partagés.
+Backend **Rust/axum** + SQLite · Frontend **React/TypeScript/Vite** · Application de bureau Windows avec **fenêtre native WebView2**.
+
+---
 
 ## Fonctionnalités
 
-- **Tableaux & Tâches** — organisez le travail en tableaux ; créez, modifiez, complétez, supprimez des tâches.
-- **Commentaires & Réactions** — discussion sur chaque tâche + réactions emoji (idempotentes par auteur).
-- **Collaboration** — invitez des personnes à un tableau via jeton de partage ; rôles (propriétaire / membre). *(à venir)*
-- **Upload PDF & extraction de dates** — téléversez un PDF, récupérez son texte et les dates détectées. *(à venir)*
-- **Compréhension de documents** — transforme un document en tâches concrètes. Utilise un LLM local (Ollama) ou un modèle cloud quand disponible, avec un repli déterministe pour que ça fonctionne toujours. *(à venir)*
+### Boards & tâches
+- **Boards, listes et tâches** : organisation kanban complète (type Trello/Asana).
+- **Drag & drop** des tâches entre listes, avec animations.
+- **Tags colorés** : créez des tags, colorez-les, attachez-les aux tâches.
+- **Commentaires** sur chaque tâche, avec **réactions** (emojis).
+- **Membres** : ajoutez des membres à un board, assignez des tâches.
 
-> État actuel : le backend (Rust) et le frontend (React/TypeScript) sont
-> fonctionnels et testés — tableaux, tâches, commentaires, réactions.
-> La collaboration avancée, l'upload PDF et la compréhension de documents sont en cours.
+### Compréhension de documents
+- **Import PDF et Markdown** (`pdf`, `md`, `markdown`, `txt`) via glisser-déposer.
+- **Extraction déterministe** (sans IA) : détection des dates, priorités et responsables dans le texte.
+- **Provider IA optionnel** pour affiner l'extraction :
+  - **Ollama local** — détecté automatiquement si un serveur tourne sur `localhost:11434`, sans clé API.
+  - **OpenAI-compatible** — activé uniquement si une clé est fournie (`T2F_OPENAI_API_KEY`).
+- L'IA reste **facultative** : sans provider disponible, l'extraction déterministe fonctionne toujours (résultat marqué `refined: false`).
 
-## Stack
+### Application de bureau Windows
+- **Fenêtre native WebView2** (tao + wry) — une application autonome style Asana/Figma, pas un navigateur.
+- **Base de données portable** : stockée dans `%LOCALAPPDATA%\Todo2fast` (survit à la réinstallation).
+- **Port unique au projet** (`42817`) avec repli automatique sur les ports suivants si celui-ci est occupé.
+- **Installateur Inno Setup** — un seul `.exe` à installer.
 
-| Couche      | Tech                                        |
-|-------------|---------------------------------------------|
-| Backend     | Rust — `axum`, SQLite (`rusqlite` bundled)   |
-| Frontend    | React + TypeScript (Vite)                 |
-| Tests E2E   | Cypress *(à venir)*                          |
-| CI          | GitHub Actions : build, clippy, tests, `cargo audit` |
+---
 
-## Développement local
+## Démarrage rapide
 
-### Backend
+### Windows (recommandé)
+
+Téléchargez le dernier installateur depuis [GitHub Releases](https://github.com/BouyaSensei/Todo2fast/releases), lancez-le, puis ouvrez **Todo2fast** depuis le menu démarrer. La fenêtre native s'ouvre automatiquement sur l'interface.
+
+### Développement
+
 ```bash
+# Backend (Rust) — API + frontend en production servés par axum
 cd backend
-cargo run          # sert l'API sur http://localhost:8080
-cargo test         # tests unitaires + intégration
-cargo fmt --all    # formatage
-cargo clippy --all-targets -- -D warnings   # lint strict
-```
+cargo run
 
-### Frontend
-```bash
+# Frontend (React/Vite) — mode dev avec hot-reload, port 5173
 cd frontend
 npm install
-npm run dev        # serveur de dev Vite sur :5173, proxy /api vers le backend :8080
-npm run build      # build de production dans dist/
+npm run dev
 ```
 
-## Installation (Windows)
+Le backend écoute sur `http://localhost:42817` par défaut.
 
-Un binaire release autonome est fourni (SQLite intégré, aucune dépendance système).
-
-**Option 1 — Script PowerShell** (install/désinstall, raccourcis, tâche au démarrage) :
-```powershell
-# après cargo build --release
-.\installer\install.ps1                 # installe dans C:\Program Files\Todo2fast
-.\installer\install.ps1 -Port 9000      # port personnalisé
-.\installer\install.ps1 -RegisterService   # démarre au boot (admin requis)
-.\installer\install.ps1 -Uninstall      # tout retirer
-```
-
-**Option 2 — Installateur .exe classique** (wizard Inno Setup, FR/EN) :
-```bash
-# nécessite Inno Setup 6 installé
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\todo2fast.iss
-# → installer\Output\Todo2fast-Setup-0.1.0.exe
-```
-
-**Option 3 — GitHub Release** : pousser un tag déclenche la CI qui compile le
-binaire + l'installateur et publie un release téléchargeable :
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
+---
 
 ## Configuration
 
-| Variable        | Défaut                     | Description                              |
-|-----------------|----------------------------|------------------------------------------|
-| `T2F_ADDR`      | `0.0.0.0:8080`             | Adresse de bind du serveur API           |
-| `T2F_DB_PATH`   | `./todo2fast.sqlite`       | Fichier de base SQLite                   |
-| `T2F_LLM_URL`   | `http://localhost:11434`   | Endpoint Ollama pour la compréhension    |
-| `T2F_LLM_MODEL` | `llama3.1`                 | Nom du modèle pour la couche LLM         |
+Toutes les variables sont **facultatives** ; l'application fonctionne sans aucune d'elles.
 
-## API
+| Variable | Description | Défaut |
+|----------|-------------|--------|
+| `T2F_ADDR` | Adresse d'écoute (host:port) | `0.0.0.0:42817` |
+| `T2F_DB_PATH` | Chemin du fichier SQLite | `%LOCALAPPDATA%\Todo2fast\todo2fast.db` (Windows) / `~/.todo2fast/todo2fast.db` |
+| `T2F_WEB_DIR` | Dossier du frontend statique à servir | auto (`web/` en install, `../frontend/dist` en dev) |
+| `T2F_OLLAMA_BASE_URL` | URL du serveur Ollama (endpoint OpenAI-compatible) | `http://localhost:11434/v1` |
+| `T2F_OLLAMA_MODEL` | Modèle Ollama par défaut | `llama3.2` |
+| `T2F_OPENAI_API_KEY` | Clé API pour un provider OpenAI-compatible (active ce provider) | — |
+| `T2F_OPENAI_BASE_URL` | Base URL d'un provider OpenAI-compatible | — |
+| `T2F_AI_MODEL` | Modèle IA à utiliser par défaut | — |
 
-| Méthode | Route                                  | Description                    |
-|---------|----------------------------------------|--------------------------------|
-| GET     | `/api/health`                          | Santé du service               |
-| POST    | `/api/boards`                          | Créer un tableau               |
-| GET     | `/api/boards`                          | Lister les tableaux            |
-| GET     | `/api/boards/:board_id`                | Obtenir un tableau             |
-| DELETE  | `/api/boards/:board_id`                | Supprimer un tableau           |
-| POST    | `/api/boards/:board_id/todos`          | Créer une tâche                |
-| GET     | `/api/boards/:board_id/todos`          | Lister les tâches d'un tableau |
-| GET     | `/api/todos/:todo_id`                  | Obtenir une tâche              |
-| PUT     | `/api/todos/:todo_id`                  | Mettre à jour une tâche        |
-| DELETE  | `/api/todos/:todo_id`                  | Supprimer une tâche            |
-| POST    | `/api/todos/:todo_id/comments`         | Créer un commentaire           |
-| GET     | `/api/todos/:todo_id/comments`         | Lister les commentaires        |
-| GET     | `/api/comments/:comment_id`            | Obtenir un commentaire         |
-| DELETE  | `/api/comments/:comment_id`            | Supprimer un commentaire       |
-| POST    | `/api/comments/:comment_id/reactions`  | Ajouter une réaction emoji     |
-| DELETE  | `/api/comments/:comment_id/reactions?author=&emoji=` | Retirer une réaction |
+> **Sécurité** : aucune clé API, token ou secret n'est exposé au client ni loggé. Les secrets sont lus côté serveur depuis l'environnement uniquement.
 
-## Sécurité
+---
 
-La CI impose une porte de sécurité à chaque push : `cargo clippy -D warnings`,
-la suite de tests complète, et `cargo audit` (analyse des vulnérabilités des
-dépendances). L'API se lie en local par défaut ; activez les jetons d'authentification
-avant de l'exposer publiquement.
+## Architecture
+
+```
+Todo2fast/
+├── backend/          # Rust + axum + SQLite (Tokio)
+│   └── src/
+│       ├── main.rs   # bootstrap, fenêtre native (Windows), serveur HTTP
+│       ├── db.rs     # persistance SQLite
+│       ├── api/      # routes REST (boards, todos, documents, ai, …)
+│       └── providers/# détection des providers IA (Ollama, OpenAI-compatible)
+├── frontend/         # React + TypeScript + Vite
+│   └── src/          # composants UI (boards, drag & drop, import, …)
+├── installer/        # script Inno Setup + build local
+└── .github/workflows/# CI (Rust + Node) et Release (installateur Windows)
+```
+
+### API (extrait)
+- `GET /api/health` — état du service
+- `GET/POST /api/boards`, `GET/PATCH/DELETE /api/boards/:id`
+- `…/boards/:id/lists`, `…/boards/:id/todos`, `…/boards/:id/tags`, `…/boards/:id/members`
+- `PATCH/DELETE /api/todos/:id`, `…/todos/:id/comments`, `…/todos/:id/tags`
+- `POST /api/documents` — upload PDF/Markdown + extraction
+- `POST /api/boards/:id/import` — import des tâches extraites dans un board
+- `GET /api/ai/providers`, `GET /api/ai/providers/:provider/models`
+
+---
+
+## Qualité & CI
+
+- **Tests** : suite Rust (`cargo test`) couvrant l'API, l'extraction de documents et la détection des providers.
+- **Lint** : `cargo clippy` (sans avertissement) + `cargo fmt`.
+- **CI GitHub Actions** : vérifie backend (tests/clippy/fmt) et frontend (typecheck/build) à chaque push.
+- **Workflow Release** : sur un tag `v*`, compile le backend, le frontend et l'installateur Inno Setup, puis publie la GitHub Release avec le `.exe`.
+
+### Version de l'exécutable = tag GitHub
+
+Le nom de l'installateur suit **toujours** le tag de release. Le workflow passe le tag (sans le `v` initial) à Inno Setup via la variable d'environnement `T2F_VERSION` :
+
+```
+tag v0.2.0  →  Todo2fast-Setup-0.2.0.exe
+tag v1.0.0  →  Todo2fast-Setup-1.0.0.exe
+```
+
+En build local (sans cette variable), le script retombe sur `0.1.0`.
+
+---
+
+## Fonctionnalités à venir
+
+- **Authentification & comptes** : connexion, rôles et permissions par board (partage privé/public).
+- **Rappels & échéances** : notifications locales aux dates détectées dans les documents.
+- **Plus de formats d'import** : Word (.docx), images avec OCR, export/reprise des boards.
+- **Recherche globale** : plein texte sur tâches, commentaires et tags.
+- **Multi-utilisateurs temps réel** : synchronisation collaborative (présence, curseurs, conflits).
+- **Thèmes & personnalisation** : thèmes clair/sombre, couleurs de board, raccourcis clavier.
+- **Sauvegarde & migration** : export JSON/SQLite, restauration, sauvegarde automatique.
+- **Plateformes** : build Linux/macOS et packaging (AppImage, .dmg).
+
+---
+
+## Licence
+
+MIT

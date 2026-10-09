@@ -42,7 +42,13 @@ jobs:
 
       - name: Compile installer
         shell: pwsh
+        env:
+          # Strip the leading "v" from the tag (v0.2.0 -> 0.2.0) so the
+          # installer filename matches the release tag. Empty on manual runs.
+          T2F_VERSION: ${{ github.ref_name }}
         run: |
+          # CI tags carry a "v" prefix; Inno versions don't.
+          if ($env:T2F_VERSION -match '^v') { $env:T2F_VERSION = $env:T2F_VERSION.Substring(1) }
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & $iscc "installer\todo2fast.iss"
           if ($LASTEXITCODE -ne 0) { exit 1 }

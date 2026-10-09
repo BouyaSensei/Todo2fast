@@ -3,7 +3,14 @@
 ; Produces: Output\Todo2fast-Setup-<version>.exe
 
 #define MyAppName "Todo2fast"
-#define MyAppVersion "0.1.0"
+; Version comes from the T2F_VERSION env var (set by CI from the git tag, e.g.
+; v0.2.0 -> 0.2.0) so the installer name always matches the release tag. Falls
+; back to 0.1.0 for local builds without that variable.
+#if GetEnv("T2F_VERSION") == ""
+  #define MyAppVersion "0.1.0"
+#else
+  #define MyAppVersion GetEnv("T2F_VERSION")
+#endif
 #define MyAppPublisher "BouyaSensei"
 #define MyAppURL "https://github.com/BouyaSensei/Todo2fast"
 #define MyAppExeName "todo2fast.exe"
